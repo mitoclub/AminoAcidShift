@@ -1,0 +1,7 @@
+{
+    "exclude": [
+        "**/__pycache__",
+        "data/chordata2",
+        "data/decomp",
+      ],
+}
