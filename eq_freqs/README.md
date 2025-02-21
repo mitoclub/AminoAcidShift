@@ -1,1 +1,1 @@
-# Block of analyses about equilibrium frequencies estimation
+# Analyses around equilibrium frequencies estimation
