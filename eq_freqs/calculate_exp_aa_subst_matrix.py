@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 from pymutspec.annotation import CodonAnnotation
 from pymutspec.constants import possible_codons
 
@@ -105,21 +106,34 @@ amino_acid_codes = {
 
 
 def main():
-    coda = CodonAnnotation(2)
-
     ms12 = pd.read_csv('../192/1data_derivation/dataset/MutSpecVertebrates12.csv.gz')
     ms12cytb = ms12[ms12.Gene == 'Cytb']
-    df_changes = collect_possible_changes(2)
     mean_vert_ms12 = ms12cytb.groupby(['Mut']).MutSpec.mean().to_dict()
 
-    ## Calculate codon and aa equilibrium frequencies
+    df_changes = collect_possible_changes(2)
     df_changes['rate'] = df_changes['sbs'].map(mean_vert_ms12)
-    cdn_sbs = df_changes.groupby(['cdn1', 'cdn2'])['rate'].sum()
-    M = cdn_spectrum_to_matrix(cdn_sbs)
+    df_changes['aa1'] = df_changes['aa1'].map(amino_acid_codes)
+    df_changes['aa2'] = df_changes['aa2'].map(amino_acid_codes)
+    aa_subst_vert = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
+        .groupby(['aa1', 'aa2'])['rate'].sum()
+    aa_subst_vert.to_csv('eq_freqs/data/exp_aa_subst_vert.csv', float_format='%g')
 
-    # TODO reformat to long table Aa1>Aa2
-    print(M)
+    aa_subst_5cls = []
+    classes_spectra = ms12cytb.groupby(['Class', 'Mut']).MutSpec.mean().unstack()
+    for _cls in classes_spectra.index:
+        mean_cls_ms12 = classes_spectra.loc[_cls].to_dict()
 
+        df_changes = collect_possible_changes(2)
+        df_changes['rate'] = df_changes['sbs'].map(mean_cls_ms12)
+        df_changes['aa1'] = df_changes['aa1'].map(amino_acid_codes)
+        df_changes['aa2'] = df_changes['aa2'].map(amino_acid_codes)
+        aa_subst_vert = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
+            .groupby(['aa1', 'aa2'])['rate'].sum().reset_index()
+        aa_subst_5cls.append(aa_subst_vert.assign(cls=_cls))
+    
+    aa_subst_5cls = pd.concat(aa_subst_5cls)
+    aa_subst_5cls.to_csv('eq_freqs/data/exp_aa_subst_5cls.csv', index=False, float_format='%g')
+    
 
 if __name__ == "__main__":
     main()
