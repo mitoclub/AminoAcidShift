@@ -40,7 +40,7 @@ def collect_possible_changes(gc):
     i = 1
     data = []
     for cdn1 in possible_codons:
-        aa1 = coda.translate_codon(cdn1)
+        aa1 = amino_acid_codes[coda.translate_codon(cdn1)]
         for pic in range(3):
             nuc1 = cdn1[pic]
             for nuc2 in nucls:
@@ -49,13 +49,14 @@ def collect_possible_changes(gc):
                 cdn2 = list(cdn1)
                 cdn2[pic] = nuc2
                 cdn2 = ''.join(cdn2)
-                aa2 = coda.translate_codon(cdn2)
+                aa2 = amino_acid_codes[coda.translate_codon(cdn2)]
                 is_syn = aa1 == aa2
                 sbs = f'{nuc1}>{nuc2}'
                 data.append((pic, cdn1, cdn2, aa1, aa2, is_syn, sbs))
                 i += 1
 
-    df_changes = pd.DataFrame(data, columns=['pic', 'cdn1', 'cdn2', 'aa1', 'aa2', 'is_syn', 'sbs'])
+    df_changes = pd.DataFrame(
+        data, columns=['pic', 'cdn1', 'cdn2', 'aa1', 'aa2', 'is_syn', 'sbs'])
     return df_changes
 
 
@@ -106,13 +107,36 @@ def get_equilibrium_probabilities(M):
     return p/p.sum()
 
 
+def get_equilibrium_freqs(spectrum: pd.DataFrame, rate_col='MutSpec', gc=1):
+    coda = CodonAnnotation(gc)
+    df_changes = collect_possible_changes(gc)
+    spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
+
+    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
+    
+    cdn_sbs = df_changes.groupby(['cdn1', 'cdn2'])['rate'].sum()
+    M = cdn_spectrum_to_matrix(cdn_sbs)
+    eq_prob = get_equilibrium_probabilities(M).astype(float)
+
+    eq_freqs_cdn = pd.Series(dict(zip(possible_codons, eq_prob)))
+    eq_freqs_cdn.name = 'eq_freq'
+    eq_freqs_cdn.index.name = 'cdn'
+    eq_freqs_cdn = eq_freqs_cdn.reset_index()
+    eq_freqs_cdn['aa'] = eq_freqs_cdn['cdn']\
+        .map(coda.translate_codon).map(amino_acid_codes)
+    
+    eq_freqs_aa = eq_freqs_cdn[eq_freqs_cdn.aa !='*'].groupby('aa')['eq_freq'].sum()
+    eq_freqs_aa /= eq_freqs_aa.sum()
+    eq_freqs_aa = eq_freqs_aa.sort_values(ascending=False).reset_index()
+    
+    return eq_freqs_cdn, eq_freqs_aa
+
+
 def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
     df_changes = collect_possible_changes(gc=gc)
     spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
 
     df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
-    df_changes['aa1'] = df_changes['aa1'].map(amino_acid_codes)
-    df_changes['aa2'] = df_changes['aa2'].map(amino_acid_codes)
 
     ## Calculate expected AA substitutions matrix
     exp_aa_subst = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
@@ -130,22 +154,9 @@ def prepare_rnd_exp_aa_subst(gc=1, save_path=None):
         'Mut': [f'{n1}>{n2}' for n1 in alphabet for n2 in alphabet if n1 != n2],
         'rate': uniform.rvs(size=12),
     })
-
-    df_changes = collect_possible_changes(gc=gc)
-    spectrum_dict = rnd_spectrum.set_index('Mut')['rate'].to_dict()
-
-    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
-    df_changes['aa1'] = df_changes['aa1'].map(amino_acid_codes)
-    df_changes['aa2'] = df_changes['aa2'].map(amino_acid_codes)
-
-    ## Calculate expected AA substitutions matrix
-    exp_aa_subst = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
-        .groupby(['aa1', 'aa2'])['rate'].sum().reset_index()
-    
-    if save_path:
-        exp_aa_subst.to_csv(save_path, float_format='%g', index=False)
-    exp_aa_subst_matrix = exp_aa_subst.pivot(index='aa1', columns='aa2', values='rate').fillna(0.)
-    return exp_aa_subst, exp_aa_subst_matrix
+    res = prepare_exp_aa_subst(
+        rnd_spectrum, rate_col='rate', gc=gc, save_path=save_path)
+    return res
 
 
 def prepare_aa_subst(obs_df: pd.DataFrame, exp_aa_subst: pd.DataFrame, ref_aa_freqs: dict):
