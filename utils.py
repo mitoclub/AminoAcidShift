@@ -9,6 +9,7 @@ from pymutspec.annotation import CodonAnnotation
 from pymutspec.constants import possible_codons
 
 alphabet = 'ACGT'
+transitions = ['A>G', 'C>T', 'G>A', 'T>C']
 amino_acid_codes = {
     "A": "Ala",
     "R": "Arg",
@@ -132,6 +133,29 @@ def get_equilibrium_freqs(spectrum: pd.DataFrame, rate_col='MutSpec', gc=1):
     return eq_freqs_cdn, eq_freqs_aa
 
 
+def get_random_spectrum(tstv_ratio=None):
+    """For normal spectrum ts/tv must be between 2 and 20"""
+    rnd_spectrum = pd.DataFrame({
+        'Mut': [f'{n1}>{n2}' for n1 in alphabet for n2 in alphabet if n1 != n2],
+        'MutSpec': uniform.rvs(size=12),
+    })
+    if tstv_ratio is not None:
+        ts_frac = rnd_spectrum[rnd_spectrum['Mut'].isin(transitions)].MutSpec.sum()
+        tv_frac = rnd_spectrum[~rnd_spectrum['Mut'].isin(transitions)].MutSpec.sum()
+        multiplier = tstv_ratio / (ts_frac / tv_frac)
+        rnd_spectrum.loc[rnd_spectrum['Mut'].isin(transitions), 'MutSpec'] *= multiplier
+
+    rnd_spectrum['MutSpec'] = rnd_spectrum['MutSpec'] / rnd_spectrum['MutSpec'].sum()
+    return rnd_spectrum
+
+
+def get_equilibrium_freqs_rnd(gc=1, tstv_ratio=2.0):
+    """Use random spectrum for aa substitutions matrix generation"""
+    rnd_spectrum = get_random_spectrum(tstv_ratio=tstv_ratio)
+    res = get_equilibrium_freqs(rnd_spectrum, rate_col='MutSpec', gc=gc)
+    return rnd_spectrum, res
+
+
 def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
     df_changes = collect_possible_changes(gc=gc)
     spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
@@ -148,14 +172,11 @@ def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_pat
     return exp_aa_subst, exp_aa_subst_matrix
 
 
-def prepare_rnd_exp_aa_subst(gc=1, save_path=None):
+def prepare_rnd_exp_aa_subst(gc=1, tstv_ratio=None, save_path=None):
     """Use random spectrum for aa substitutions matrix generation"""
-    rnd_spectrum = pd.DataFrame({
-        'Mut': [f'{n1}>{n2}' for n1 in alphabet for n2 in alphabet if n1 != n2],
-        'rate': uniform.rvs(size=12),
-    })
+    rnd_spectrum = get_random_spectrum(tstv_ratio=tstv_ratio)
     res = prepare_exp_aa_subst(
-        rnd_spectrum, rate_col='rate', gc=gc, save_path=save_path)
+        rnd_spectrum, rate_col='MutSpec', gc=gc, save_path=save_path)
     return res
 
 
