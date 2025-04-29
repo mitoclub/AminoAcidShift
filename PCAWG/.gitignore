@@ -3,3 +3,4 @@
 *.simple
 *.vcf
 hist.txt
+data/missense_mutations.csv

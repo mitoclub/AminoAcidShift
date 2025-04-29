@@ -22,7 +22,7 @@ echo $INPUT $OUTPUT
 
 $APPTAINER exec \
   --pwd /data \
-  --bind $PWD:/data \
+  --bind ./data:/data \
   /opt/tools/vep.sif \
   vep -i $INPUT -o $OUTPUT --vcf \
     --species homo_sapiens --assembly $assembly \
@@ -30,8 +30,3 @@ $APPTAINER exec \
 
 done
 done
-
-# gatk VariantsToTable \
-#     -V cohort.merged.flt.snpgap.dnm_gatk2.annotated.vcf \
-#     -O cohort.merged.flt.snpgap.dnm_gatk2.annotated.table \
-#     -F CHROM -F POS -F REF -F ALT -F TYPE -F CSQ

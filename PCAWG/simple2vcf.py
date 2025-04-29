@@ -46,6 +46,7 @@ df['chr_index'] = df[0].map(chr_index_map, )
 
 assert df['chr_index'].isna().sum() == 0
 
+# TODO subset = [0,1,4,5]
 df = df.drop_duplicates(subset=[0,1,4]).sort_values(['chr_index', 1])
 del df['chr_index']
 df.to_csv(outpath, header=False, index=False, sep='\t')

@@ -13,6 +13,8 @@ Here we report the integrative analysis of 2,658 whole-cancer genomes and their 
 ### Commands
 
 ```bash
+cd data
+
 # download code for spectra calculation
 aws s3 cp s3://icgc25k-open/PCAWG/mutational_signatures/Code/PCAWG7_Data_Preparation_Code/PCAWG7_data_preparation_version_1.5.zip . --endpoint-url https://object.genomeinformatics.org --no-sign-request
 
@@ -47,6 +49,8 @@ strand_idx = -1
 ### Select only SNPs and SNVs in 3 most represented reference
 
 ```bash
+cd data
+
 grep -e "        SNP" -e "       SNV" WES_Other.20180327.simple > WES.SNP.simple
 grep -e "        SNP" -e "       SNV" WGS_Other.20180413.simple > WGS.SNP.simple
 
@@ -63,6 +67,8 @@ rm WGS.SNP.simple WES.SNP.simple
 ## Annotate using VEP
 
 ```bash
+cd data
+
 # reformat to vcf
 python3 simple2vcf.py WES.SNP.GRCh37.simple WES.SNP.GRCh37.vcf
 python3 simple2vcf.py WES.SNP.GRCh38.simple WES.SNP.GRCh38.vcf
@@ -72,4 +78,12 @@ python3 simple2vcf.py WGS.SNP.GRCh38.simple WGS.SNP.GRCh38.vcf
 # python3 simple2vcf.py WGS.SNP.hg19.simple WGS.SNP.hg19.vcf
 
 bash annotate_variants.sh
+```
+
+## Download reference and proteome
+
+```bash
+cd data
+
+datasets download genome accession GCF_000001405.40 --include protein,genome,cds
 ```
