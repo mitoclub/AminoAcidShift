@@ -1,0 +1,11 @@
+# disease_idx = 0 # cancer type
+# tumour_idx = 1
+# assembly_idx = 3
+# vartype_idx = 4
+# chrome_idx = 5
+# pos_idx = 6
+# refbase_idx = 8
+# varbase_idx = 9
+# annotations_idx = 10
+# strand_idx = -1
+disease id cohort assembly snp/indel chr start end ref var annotations
