@@ -147,7 +147,7 @@ def main():
 
     metrics_total_df = pd.DataFrame(metrics_total).set_index(['dataset'])
     metrics_total_df.to_csv('datasets_fit_metrics.csv', float_format='%g')
-    print(metrics_total_df['slope,log_likelihood,spearman_corr,accuracy,mut_count'.split(',')])
+    print(metrics_total_df['wape,spearman_corr,r2,mut_count'.split(',')])
 
 
 if __name__ == "__main__":

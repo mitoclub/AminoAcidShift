@@ -3,13 +3,13 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.stats import chisquare, ks_2samp, pearsonr, spearmanr, uniform
-from scipy.special import kl_div
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 from pymutspec.annotation import CodonAnnotation
 from pymutspec.constants import possible_codons
 
 alphabet = 'ACGT'
 transitions = ['A>G', 'C>T', 'G>A', 'T>C']
+transversions = ['A>C', 'A>T', 'C>A', 'C>G', 'G>C', 'G>T', 'T>A', 'T>G']
 amino_acid_codes = {
     "A": "Ala",
     "R": "Arg",
@@ -35,7 +35,7 @@ amino_acid_codes = {
 }
 
 
-def collect_possible_changes(gc):
+def collect_possible_changes(gc, spectrum_dict=None):
     coda = CodonAnnotation(gc)
     nucls = alphabet
     i = 1
@@ -58,6 +58,10 @@ def collect_possible_changes(gc):
 
     df_changes = pd.DataFrame(
         data, columns=['pic', 'cdn1', 'cdn2', 'aa1', 'aa2', 'is_syn', 'sbs'])
+    
+    if spectrum_dict is not None:
+        df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)    
+
     return df_changes
 
 
@@ -72,52 +76,53 @@ def nuc_spectrum_to_matrix(spec):
                 M[i2,i1] = spec[f"{n1}>{n2}"]
     # normalize off-diagonal rates (just for standardization, doesn't affect the results)
     M /= M.sum()
-    # # will the diagonal with 'outflow' term to guarantee conservation of probability
-    d = M.sum(axis=0)
-    np.fill_diagonal(M,-d)
-
-    return M
-
-
-def cdn_spectrum_to_matrix(cdn_sbs):
-    '''
-    convert dictionary of mutation counts to mutation matrix
-    '''
-    n = len(possible_codons)
-    M = np.zeros((n, n))
-    for i1,cdn1 in enumerate(possible_codons):
-        for i2,cdn2 in enumerate(possible_codons):
-            if cdn1!=cdn2:
-                val = cdn_sbs[(cdn1, cdn2)] if (cdn1, cdn2) in cdn_sbs.index else 0.
-                M[i2,i1] = val
-    # normalize off-diagonal rates (just for standardization, doesn't affect the results)
-    M /= M.sum()
     # will the diagonal with 'outflow' term to guarantee conservation of probability
     d = M.sum(axis=0)
     np.fill_diagonal(M,-d)
     return M
 
 
-def get_equilibrium_probabilities(M):
-    evals, evecs = np.linalg.eig(M)
-    # find zero eigenvalue
-    ii = np.argmin(np.abs(evals))
-    assert np.abs(evals[ii])<1e-10
-    # pull out corresponding eigenvector, return normalized to sum_i p_i = 1
-    p = evecs[:,ii]
-    return p/p.sum()
+def cdn_spectrum_to_matrix(df_changes: pd.DataFrame):
+    cdn_sbs = df_changes.groupby(['cdn1', 'cdn2'])['rate'].sum().reset_index()
+    Pcdn = cdn_sbs.pivot(index='cdn1', columns='cdn2', values='rate').fillna(0.)
+    Pcdn = (Pcdn.T / Pcdn.sum(axis=1)).T
+    return Pcdn
+
+
+def get_equilibrium_probabilities(Pmatrix: np.ndarray):
+    Q = Pmatrix.copy()
+    Q = Q - np.diag(np.sum(Q, axis=1))
+
+    values, vectors = np.linalg.eig(Q.T)
+    pi = vectors[:, np.isclose(values, 0)].real.flatten()
+    pi = pi / pi.sum()
+    return pi
+
+
+def simulate_markov_continual(
+        transition_Pmatrix: np.ndarray, initial_vector: np.ndarray, 
+        num_iterations: int, delta_t=0.01):
+    pi = initial_vector.copy()
+    data = [pi.copy()]
+    Q = transition_Pmatrix.copy()
+    Q = Q - np.diag(np.sum(Q, axis=1))
+    for _ in range(num_iterations):
+        pi_new = pi + delta_t * (pi @ Q)
+        pi_new = pi_new / pi_new.sum()
+        data.append(pi_new.copy())
+        if np.linalg.norm(pi_new - pi) < 1e-8:
+            break
+        pi = pi_new
+    return data
 
 
 def get_equilibrium_freqs(spectrum: pd.DataFrame, rate_col='MutSpec', gc=1):
     coda = CodonAnnotation(gc)
-    df_changes = collect_possible_changes(gc)
     spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
-
-    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
+    df_changes = collect_possible_changes(gc, spectrum_dict)
     
-    cdn_sbs = df_changes.groupby(['cdn1', 'cdn2'])['rate'].sum()
-    M = cdn_spectrum_to_matrix(cdn_sbs)
-    eq_prob = get_equilibrium_probabilities(M).astype(float)
+    M = cdn_spectrum_to_matrix(df_changes)
+    eq_prob = get_equilibrium_probabilities(M.values)
 
     eq_freqs_cdn = pd.Series(dict(zip(possible_codons, eq_prob)))
     eq_freqs_cdn.name = 'eq_freq'
@@ -131,6 +136,33 @@ def get_equilibrium_freqs(spectrum: pd.DataFrame, rate_col='MutSpec', gc=1):
     eq_freqs_aa = eq_freqs_aa.sort_values(ascending=False).reset_index()
     
     return eq_freqs_cdn, eq_freqs_aa
+
+
+def get_random_spectra(n=10, tstv_sampling='poisson'):
+    """For normal spectrum ts/tv must be between 2 and 10
+    - param tstv_sampling: 'poisson', 'random'
+    """
+    columns = [f'{n1}>{n2}' for n1 in alphabet for n2 in alphabet if n1 != n2]
+    data = uniform.rvs(size=(n, 12))
+    rnd_spectra = pd.DataFrame(data, columns=columns)
+    sampled_tstv_ratios = (rnd_spectra[transitions].sum(axis=1) / \
+                          rnd_spectra[transversions].sum(axis=1)).values
+    
+    if tstv_sampling == 'poisson':
+        tstv_ratios = np.random.poisson(3.5, n) + np.random.random(n)
+        multiplier = tstv_ratios / sampled_tstv_ratios
+        rnd_spectra[transitions] *= multiplier[:, None]
+    elif tstv_sampling == 'random':
+        tstv_ratios = sampled_tstv_ratios
+    else:
+        raise ValueError(f"Unknown tstv_sampling: {tstv_sampling}")
+
+    rnd_spectra = (rnd_spectra.T / rnd_spectra.sum(axis=1)).T
+    rnd_spectra['tstv_ratio'] = tstv_ratios
+    rnd_spectra.reset_index(names='replica', inplace=True)
+    rnd_spectra_long = rnd_spectra.melt(
+        ['replica', 'tstv_ratio'], var_name='Mut', value_name='MutSpec')
+    return rnd_spectra_long
 
 
 def get_random_spectrum(tstv_ratio=None):
@@ -172,6 +204,22 @@ def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_pat
     return exp_aa_subst, exp_aa_subst_matrix
 
 
+def prepare_exp_cdn_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
+    df_changes = collect_possible_changes(gc=gc)
+    spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
+
+    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
+
+    ## Calculate expected AA substitutions matrix
+    exp_cdn_subst = df_changes[(df_changes.cdn1 != '*')&(df_changes.cdn2 != '*')]\
+        .groupby(['cdn1', 'cdn2'])['rate'].sum().reset_index()
+    
+    if save_path:
+        exp_cdn_subst.to_csv(save_path, float_format='%g', index=False)
+    exp_cdn_subst_matrix = exp_cdn_subst.pivot(index='cdn1', columns='cdn2', values='rate').fillna(0.)
+    return exp_cdn_subst, exp_cdn_subst_matrix
+
+
 def prepare_rnd_exp_aa_subst(gc=1, tstv_ratio=None, save_path=None):
     """Use random spectrum for aa substitutions matrix generation"""
     rnd_spectrum = get_random_spectrum(tstv_ratio=tstv_ratio)
@@ -195,13 +243,17 @@ def prepare_aa_subst(obs_df: pd.DataFrame, exp_aa_subst: pd.DataFrame, ref_aa_fr
     aa_subst = aa_subst[aa_subst['aa1'] != aa_subst['aa2']]
     aa_subst['nexp'] = aa_subst['rate_exp'] / aa_subst['rate_exp'].sum() * aa_subst['nobs_scaled'].sum()
     aa_subst['diff'] = aa_subst['nobs_scaled'] - aa_subst['nexp']
+    aa_subst['mape'] = aa_subst['diff'] / aa_subst['nobs_scaled']
     aa_subst['nobs_freqs'] = aa_subst['nobs_scaled'] / aa_subst['nobs_scaled'].sum()
     aa_subst['nexp_freqs'] = aa_subst['nexp'] / aa_subst['nexp'].sum()
     return aa_subst
 
 
 def calc_accuracy(y_true, y_pred):
-    '''Acc = Sum(TP1, TP2, …, TPn)/total_obs_cnt'''
+    '''
+    LEGACY
+    
+    Acc = Sum(TP1, TP2, …, TPn)/total_obs_cnt'''
     TP = np.min([y_true, y_pred], axis=0)
     total_obs_cnt = y_true.sum()
     acc = TP.sum() / total_obs_cnt
@@ -209,7 +261,11 @@ def calc_accuracy(y_true, y_pred):
 
 
 def calc_f1(y_true, y_pred):
-    '''Acc = Sum(TP1, TP2, …, TPn)/total_obs_cnt'''
+    '''
+    LEGACY
+
+    Acc = Sum(TP1, TP2, …, TPn)/total_obs_cnt
+    '''
     f1_weighted = 0.
     f1_macro = 0.
     total = y_true.sum()
@@ -252,6 +308,10 @@ def calc_slope(y_true, y_pred):
     return slope, intercept
 
 
+def weighted_average_percentage_error(y_true, y_pred):
+    return mean_absolute_percentage_error(y_true, y_pred, sample_weight=y_true)
+
+
 def calc_metrics(aa_subst: pd.DataFrame):
     aa_subst = aa_subst.dropna()
     y_true = aa_subst.nobs_scaled
@@ -270,41 +330,35 @@ def calc_metrics(aa_subst: pd.DataFrame):
     except:
         rmse = np.nan
 
+    mask = y_true > 0
+    mape = mean_absolute_percentage_error(y_true[mask], y_pred[mask])
+    wape = weighted_average_percentage_error(y_true[mask], y_pred[mask])
+
     # Spearman's rank correlation coefficient
     spearman_corr, spearman_p = spearmanr(y_true, y_pred)
     pearson_corr, pearson_p = pearsonr(y_true, y_pred)
 
-    # 6. KL-divergence
-    kl_divergence = np.sum(kl_div(aa_subst.nobs_freqs, 
-                                aa_subst.nexp_freqs))
-    
     # total number of ns mutations
     mut_count = np.sum(y_true)
 
-    acc = calc_accuracy(y_true, y_pred)
-    try:
-        f1_macro, f1_weighted = calc_f1(y_true, y_pred)
-    except ZeroDivisionError:
-        print('Cannot calculate F1 score, division by zero')
-        f1_macro, f1_weighted = np.nan, np.nan
-
     slope, intercept = calc_slope(aa_subst.nobs_freqs, aa_subst.nexp_freqs)
+
+    r2 = r2_score(y_true, y_pred)
     
     metrics = {
+        'r2': r2,
+        'mape': mape,
+        'wape': wape,
         'slope': slope,
         'intercept': intercept,
-        'ks_stat': ks_stat,
-        'ks_p': ks_p,
-        'log_likelihood': log_likelihood,
-        'rmse': rmse,
         'spearman_corr': spearman_corr,
         'spearman_p': spearman_p,
         'pearson_corr': pearson_corr,
         'pearson_p': pearson_p,
-        'kl_divergence': kl_divergence,
-        'accuracy': acc,
-        'f1_macro': f1_macro,
-        'f1_weighted': f1_weighted,
+        'ks_stat': ks_stat,
+        'ks_p': ks_p,
+        'rmse': rmse,
+        'log_likelihood': log_likelihood,
         'mut_count': mut_count,
     }
     return metrics
@@ -321,7 +375,7 @@ def plot_exp_heatmap(exp_aa_subst_matrix: pd.DataFrame, save_path: str, show=Tru
     fig, axs = plt.subplots(2, 3, figsize=(11, 10), 
                             width_ratios=[0.1, 1, .05], height_ratios=[1, 0.1])
     sns.heatmap(exp_aa_subst_matrix, annot=annot, fmt=".2f", 
-                ax=axs[0, 1], cbar_ax=axs[0, 2], cmap='coolwarm', 
+                ax=axs[0, 1], cbar_ax=axs[0, 2], cmap="light:r", 
                 cbar_kws={'label': 'Substitution rate'}, 
                 mask=exp_aa_subst_matrix==0,
     )
