@@ -48,7 +48,7 @@ def read_aa_counts_from_gb(path: str) -> dict:
                             .apply(Counter).to_dict()).T.fillna(0).astype(int)
 
     aa_counts_total = genes_aa_counts_df[genes_aa_counts_df.index != 'ND6']\
-        .sum(0).rename('TOTAL').to_frame().T
+        .sum(0).rename('TOTALH').to_frame().T
     genes_aa_counts_df = pd.concat([genes_aa_counts_df, aa_counts_total], axis=0)\
         .rename(columns=amino_acid_codes)
     return genes_aa_counts_df.T.to_dict()
@@ -68,6 +68,9 @@ def main():
     chordates_species_mut = pd.read_csv('./vertebrates_aa_subst/dataset/obs_muts.csv')\
         .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaMut': 'count'})\
             .query('gene != "ND6"')
+    # print(chordates_species_mut.groupby('gene')['count'].sum())
+    chordates_species_mut_Cytb = chordates_species_mut.query('gene == "Cytb"')
+    chordates_species_mut_ND2 = chordates_species_mut.query('gene == "ND2"')
 
     megatree_mut = pd.read_csv('external_datasets/raw_human_megatree.csv')\
         .rename(columns={'Aa1': 'aa1', 'Aa2': 'aa2', 'ProbaFull': 'count'})
@@ -107,8 +110,10 @@ def main():
     ).query('Label == 0').rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
 
     # read spectra
-    chordates_species_ms12 = pd.read_csv('../192/1data_derivation/dataset/MutSpecVertebrates12.csv.gz')
-    chordates_species_ms12 = chordates_species_ms12.query('Gene == "Cytb"')\
+    chordates_species_ms12_raw = pd.read_csv('../192/1data_derivation/dataset/MutSpecVertebrates12.csv.gz')
+    chordates_species_ms12_Cytb = chordates_species_ms12_raw.query('Gene == "Cytb"')\
+        .groupby(['Mut']).MutSpec.mean().reset_index()
+    chordates_species_ms12_ND2 = chordates_species_ms12_raw.query('Gene == "ND2"')\
         .groupby(['Mut']).MutSpec.mean().reset_index()
     
     # # MBE spectrum for all datasets
@@ -120,14 +125,17 @@ def main():
     cancer_ms12 = pd.read_csv('../mtdnaMutSpecOfCancers/data/mutspecs/cancer_mutspec12custom.csv')\
         .rename(columns={'MutSpec_AllWithoutDloop': 'MutSpec'})
     cancer_ms12['Mut'] = cancer_ms12['Mut'].str.translate(transcriptor)
-    # gtex_ms12 = cancer_ms12
-    # mitomap_mutspec = cancer_ms12
-    global_chordates_ms12 = pd.read_csv("external_datasets/global_cytb_chordates_ms12syn.tsv", sep='\t')
 
-    total_spectra = [global_chordates_ms12, chordates_species_ms12, megatree_ms12, cancer_ms12, cancer_ms12, cancer_ms12, cancer_ms12]
-    total_obs = [global_chordates_mut, chordates_species_mut, megatree_mut, cancer_mut, gtex_mut, mitomap_mut, mitomap_pathogenic]
-    total_freqs_genes = ['CYTB', 'TOTAL', 'TOTAL', 'TOTAL', 'TOTAL', 'TOTAL', 'TOTAL']
-    total_labels = ['global_chordates_cytb', 'chordates_species', 'megatree', 'cancer', 'gtex', 'mitomap', 'mitomap_pathogenic']
+    # global_chordates_ms12 = pd.read_csv("external_datasets/global_cytb_chordates_ms12syn.tsv", sep='\t')
+
+    # use mean chordates ms for global dataset
+    total_spectra = [chordates_species_ms12_Cytb, chordates_species_ms12_Cytb, chordates_species_ms12_ND2, 
+                     megatree_ms12, cancer_ms12, cancer_ms12, cancer_ms12, cancer_ms12]
+    total_obs = [global_chordates_mut, chordates_species_mut_Cytb, chordates_species_mut_ND2, 
+                 megatree_mut, cancer_mut, gtex_mut, mitomap_mut, mitomap_pathogenic]
+    total_freqs_genes = ['CYTB', 'CYTB', 'ND2', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH']
+    total_labels = ['global_chordates_cytb', 'chordates_species_Cytb', 'chordates_species_ND2', 
+                    'megatree', 'cancer', 'gtex', 'mitomap', 'mitomap_pathogenic']
     
     metrics_total = []
     for ms12, obs, freqs_gene, dataset in zip(
@@ -135,7 +143,7 @@ def main():
 
         print(dataset, len(obs), '##################')
 
-        exp_aa_subst, exp_aa_subst_matrix = prepare_exp_aa_subst(ms12, 'MutSpec', 2)
+        exp_aa_subst, _exp_aa_subst_matrix = prepare_exp_aa_subst(ms12, 'MutSpec', 2)
 
         # Select clade OBS AA substitutions
         obs = obs[(obs.aa1 != '*') & (obs.aa2 != '*')]
@@ -147,7 +155,7 @@ def main():
 
     metrics_total_df = pd.DataFrame(metrics_total).set_index(['dataset'])
     metrics_total_df.to_csv('datasets_fit_metrics.csv', float_format='%g')
-    print(metrics_total_df['wape,spearman_corr,r2,mut_count'.split(',')])
+    print(metrics_total_df['r2,spearman_corr,mut_count'.split(',')])
 
 
 if __name__ == "__main__":
