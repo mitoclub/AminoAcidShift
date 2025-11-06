@@ -73,12 +73,9 @@ def nuc_spectrum_to_matrix(spec):
     for i1,n1 in enumerate(alphabet):
         for i2,n2 in enumerate(alphabet):
             if n1!=n2:
-                M[i2,i1] = spec[f"{n1}>{n2}"]
+                M[i1,i2] = spec[f"{n1}>{n2}"]
     # normalize off-diagonal rates (just for standardization, doesn't affect the results)
-    M /= M.sum()
-    # will the diagonal with 'outflow' term to guarantee conservation of probability
-    d = M.sum(axis=0)
-    np.fill_diagonal(M,-d)
+    M /= M.sum()    
     return M
 
 
@@ -243,7 +240,7 @@ def prepare_aa_subst(obs_df: pd.DataFrame, exp_aa_subst: pd.DataFrame, ref_aa_fr
     aa_subst = aa_subst[aa_subst['aa1'] != aa_subst['aa2']]
     aa_subst['nexp'] = aa_subst['rate_exp'] / aa_subst['rate_exp'].sum() * aa_subst['nobs_scaled'].sum()
     aa_subst['diff'] = aa_subst['nobs_scaled'] - aa_subst['nexp']
-    aa_subst['mape'] = aa_subst['diff'] / aa_subst['nobs_scaled']
+    aa_subst['pe'] = aa_subst['diff'] / aa_subst['nobs_scaled'] * 100  # %
     aa_subst['nobs_freqs'] = aa_subst['nobs_scaled'] / aa_subst['nobs_scaled'].sum()
     aa_subst['nexp_freqs'] = aa_subst['nexp'] / aa_subst['nexp'].sum()
     return aa_subst
@@ -360,6 +357,7 @@ def calc_metrics(aa_subst: pd.DataFrame):
         'rmse': rmse,
         'log_likelihood': log_likelihood,
         'mut_count': mut_count,
+        'mut_type_count': aa_subst.nobs.ne(0).sum(),
     }
     return metrics
 
