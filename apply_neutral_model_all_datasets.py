@@ -1,22 +1,15 @@
-import os
 from collections import Counter
 
-from Bio import SeqIO
+import numpy as np
 import pandas as pd
-import tqdm
-from pymutspec.io import read_genbank_ref
+from Bio import SeqIO
 from pymutspec.annotation import CodonAnnotation, transcriptor
 
 from utils import (
     amino_acid_codes, prepare_aa_subst,
     calc_metrics, prepare_exp_aa_subst, 
+    get_random_spectra,
 )
-
-##  inputs:
-# - aa frequencies
-# - spectra
-# - mutations
-
 
 coda = CodonAnnotation(2)
 path_to_genbank = 'NC_012920.1.gb'
@@ -65,19 +58,44 @@ def main():
     genes_aa_freqs = read_aa_counts_from_gb(path_to_genbank)
 
     # read mutations from all datasets
+
+    ## Mutations from comparative-species level Cytb and ND2
+
+    # global_chordates_mut = pd.read_csv(
+    #     './external_datasets/raw_global_vert_cytb_mutations.tsv', sep='\t'
+    # ).query('Label == 0').rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+
+    mammals_cytb_mut_gtr = pd.read_csv('./external_datasets/mammals_mutations/cytb_gtr.tsv', sep='\t')
+    mammals_cytb_mut_unr = pd.read_csv('./external_datasets/mammals_mutations/cytb_unrest.tsv', sep='\t')
+    mammals_cytb_mut_gtr = mammals_cytb_mut_gtr.query('Label == 0 & ProbaFull > 0.3')\
+        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+    mammals_cytb_mut_unr = mammals_cytb_mut_unr.query('Label == 0 & ProbaFull > 0.3')\
+        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+
+    mammals_nd1_mut_gtr = pd.read_csv('./external_datasets/mammals_mutations/nd1_gtr.tsv', sep='\t')
+    mammals_nd1_mut_unr = pd.read_csv('./external_datasets/mammals_mutations/nd1_unrest.tsv', sep='\t')
+    mammals_nd1_mut_gtr = mammals_nd1_mut_gtr.query('Label == 0 & ProbaFull > 0.3')\
+        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+    mammals_nd1_mut_unr = mammals_nd1_mut_unr.query('Label == 0 & ProbaFull > 0.3')\
+        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+
+
+    ## VERTEBRATES Cytb and ND2 germline mutations
     chordates_species_mut = pd.read_csv('./vertebrates_aa_subst/dataset/obs_muts.csv')\
-        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaMut': 'count'})\
-            .query('gene != "ND6"')
-    # print(chordates_species_mut.groupby('gene')['count'].sum())
+        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaMut': 'count'})
+        
     chordates_species_mut_Cytb = chordates_species_mut.query('gene == "Cytb"')
     chordates_species_mut_ND2 = chordates_species_mut.query('gene == "ND2"')
+    del chordates_species_mut
 
+    ## Human mtDNA germline mutations from megatree
     megatree_mut = pd.read_csv('external_datasets/raw_human_megatree.csv')\
         .rename(columns={'Aa1': 'aa1', 'Aa2': 'aa2', 'ProbaFull': 'count'})
     megatree_mut = megatree_mut[(megatree_mut.TypeRef == 'CDS') & 
                                 (megatree_mut.Label == 0) & 
                                 (megatree_mut.GeneRef != 'ND6')]
     
+    ## Human mtDNA somatic mutations
     cancer_mut = pd.read_csv('https://raw.githubusercontent.com/mitoclub/mtdna-192component-mutspec-chordata/refs/heads/main/0cancer/data/mutations.csv')
     cancer_mut = cancer_mut[(cancer_mut.Type == 'CDS') & 
                             (cancer_mut.Label == 0) & 
@@ -85,6 +103,7 @@ def main():
     cancer_mut['aa1'] = cancer_mut.apply(lambda x: coda.translate_codon(x.Codon), axis=1)
     cancer_mut['aa2'] = cancer_mut.apply(lambda x: coda.translate_codon(x.AltCodon), axis=1)
 
+    ## Human mtDNA somatic and pathogenic mutations from MITOMAP
     mitomap_mut = pd.read_csv('external_datasets/MutationsSomatic_MITOMAP_Foswiki.csv')
     mitomap_mut = mitomap_mut[mitomap_mut['Amino Acid Change'].str.match('[A-Z]-[A-Z]$')]
     mitomap_mut = mitomap_mut.query('Locus != "MT-ND6"').assign(count=1)
@@ -99,27 +118,26 @@ def main():
     mitomap_pathogenic['aa2'] = mitomap_pathogenic['aaΔ-or-RNA'].str[-1]
     mitomap_pathogenic['count'] = 1
 
+    ## Human mtDNA nearly somatic mutations from gTEX
     gtex_mut = pd.read_csv('./external_datasets/gtex_annotated.csv')
     gtex_mut = gtex_mut[(gtex_mut.Type == 'CDS') & (gtex_mut.PosInCodon > 0)].assign(count=1)
     gtex_mut['AltCodon'] = gtex_mut.apply(lambda x: generate_alt_codon(x.Codon, x.PosInCodon, x.DerivedAllele), axis=1)
     gtex_mut['aa1'] = gtex_mut.apply(lambda x: coda.translate_codon(x.Codon), axis=1)
     gtex_mut['aa2'] = gtex_mut.apply(lambda x: coda.translate_codon(x.AltCodon), axis=1)
 
-    global_chordates_mut = pd.read_csv(
-        './external_datasets/raw_global_vert_cytb_mutations.tsv', sep='\t'
-    ).query('Label == 0').rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
-
     # read spectra
-    chordates_species_ms12_raw = pd.read_csv('../192/1data_derivation/dataset/MutSpecVertebrates12.csv.gz')
-    chordates_species_ms12_Cytb = chordates_species_ms12_raw.query('Gene == "Cytb"')\
-        .groupby(['Mut']).MutSpec.mean().reset_index()
-    chordates_species_ms12_ND2 = chordates_species_ms12_raw.query('Gene == "ND2"')\
-        .groupby(['Mut']).MutSpec.mean().reset_index()
+    chordates_species_ms12_raw = pd.read_csv(
+        '../192/1data_derivation/dataset/MutSpecVertebrates12.csv.gz')
+    chordates_species_ms12_Cytb = chordates_species_ms12_raw\
+        .query('Gene == "Cytb" & Class == "Mammalia"')\
+            .groupby(['Mut']).MutSpec.mean().reset_index()
+    chordates_species_ms12_ND2 = chordates_species_ms12_raw\
+        .query('Gene == "ND2" & Class == "Mammalia"')\
+            .groupby(['Mut']).MutSpec.mean().reset_index()
+    assert len(chordates_species_ms12_Cytb) == 12
+    assert len(chordates_species_ms12_ND2)  == 12
+    chordates_species_ms12_ND1 = chordates_species_ms12_ND2
     
-    # # MBE spectrum for all datasets
-    # global_chordates_ms12 = megatree_ms12 = cancer_ms12 = chordates_species_ms12
-    
-    # custom spectra
     megatree_ms12 = pd.read_csv('../human_mtDNA_megatree/data/spectra/ms12syn.csv')
     megatree_ms12['Mut'] = megatree_ms12['Mut'].str.translate(transcriptor)
     cancer_ms12 = pd.read_csv('../mtdnaMutSpecOfCancers/data/mutspecs/cancer_mutspec12custom.csv')\
@@ -129,13 +147,23 @@ def main():
     # global_chordates_ms12 = pd.read_csv("external_datasets/global_cytb_chordates_ms12syn.tsv", sep='\t')
 
     # use mean chordates ms for global dataset
-    total_spectra = [chordates_species_ms12_Cytb, chordates_species_ms12_Cytb, chordates_species_ms12_ND2, 
-                     megatree_ms12, cancer_ms12, cancer_ms12, cancer_ms12, cancer_ms12]
-    total_obs = [global_chordates_mut, chordates_species_mut_Cytb, chordates_species_mut_ND2, 
-                 megatree_mut, cancer_mut, gtex_mut, mitomap_mut, mitomap_pathogenic]
-    total_freqs_genes = ['CYTB', 'CYTB', 'ND2', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH']
-    total_labels = ['global_chordates_cytb', 'chordates_species_Cytb', 'chordates_species_ND2', 
-                    'megatree', 'cancer', 'gtex', 'mitomap', 'mitomap_pathogenic']
+    total_spectra = [
+        chordates_species_ms12_Cytb, chordates_species_ms12_Cytb, 
+        chordates_species_ms12_ND1, chordates_species_ms12_ND1, 
+        chordates_species_ms12_Cytb, chordates_species_ms12_ND2,
+        megatree_ms12, cancer_ms12, cancer_ms12, cancer_ms12, cancer_ms12]
+    total_obs = [
+        mammals_cytb_mut_gtr, mammals_cytb_mut_unr, 
+        mammals_nd1_mut_gtr, mammals_nd1_mut_unr, 
+        chordates_species_mut_Cytb, chordates_species_mut_ND2, 
+        megatree_mut, cancer_mut, gtex_mut, mitomap_mut, mitomap_pathogenic]
+    total_freqs_genes = ['CYTB', 'CYTB', 'ND1', 'ND1', 'CYTB', 'ND2', 
+                         'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH']
+    total_labels = [
+        'mam_cytb_gtr', 'mam_cytb_unr',
+        'mam_nd1_gtr', 'mam_nd1_unr',
+        'chordates_species_Cytb', 'chordates_species_ND2', 
+        'megatree', 'cancer', 'gtex', 'mitomap', 'mitomap_pathogenic']
     
     metrics_total = []
     for ms12, obs, freqs_gene, dataset in zip(
@@ -151,11 +179,28 @@ def main():
         aa_subst = prepare_aa_subst(obs, exp_aa_subst, genes_aa_freqs[freqs_gene])
         cur_metrics = calc_metrics(aa_subst)
         cur_metrics['dataset'] = dataset
+
+        # get metrics on random spectra
+        r2_rnd = []
+        pearson_corr_rnd = []
+        rnd_spectra = get_random_spectra(100)
+        for _, ms_rnd in rnd_spectra.groupby('replica'):
+            exp_aa_subst, _1 = prepare_exp_aa_subst(ms_rnd, 'MutSpec', 2)
+            aa_subst_rnd = prepare_aa_subst(obs, exp_aa_subst, genes_aa_freqs[freqs_gene])
+            cur_metrics_rnd = calc_metrics(aa_subst_rnd)
+            r2_rnd.append(cur_metrics_rnd['r2'])
+            pearson_corr_rnd.append(cur_metrics_rnd['pearson_corr'])
+        cur_metrics['r2_rnd'] = np.mean(r2_rnd)
+        cur_metrics['pearson_corr_rnd'] = np.mean(pearson_corr_rnd)
+
         metrics_total.append(cur_metrics)
 
     metrics_total_df = pd.DataFrame(metrics_total).set_index(['dataset'])
+    metrics_total_df['pearson_corr_squared'] = metrics_total_df['pearson_corr'] ** 2
+    metrics_total_df['pearson_corr_squared_rnd'] = metrics_total_df['pearson_corr_rnd'] ** 2
     metrics_total_df.to_csv('datasets_fit_metrics.csv', float_format='%g')
-    print(metrics_total_df['r2,spearman_corr,mut_count'.split(',')])
+    
+    print(metrics_total_df['pearson_corr_squared,pearson_corr_squared_rnd,mut_count'.split(',')])
 
 
 if __name__ == "__main__":
