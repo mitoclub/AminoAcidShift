@@ -67,39 +67,25 @@ def read_aa_counts_from_gb(path='NC_012920.1.gb'):
 
 
 def main():
-    # viral_spectra_raw = pd.read_csv('./data/viral_spectra_dataset.csv').query('df == "nemu"')
-    # viral_spectra = viral_spectra_raw.melt(
-    #     ['Type', 'taxname', 'virusname'], 
-    #     viral_spectra_raw.columns[:12].values, 'Mut', 'Rate'
-    # ).sort_values(['virusname', 'Mut'])
     spectra = pd.read_csv(
         './external_datasets/human_megatree_genes_spectra.csv', index_col=0)
 
     # read amino acid freqs from protein files
     aa_freqs = read_aa_counts_from_gb()
 
-    # _mut_all = pd.read_csv('./data/allmut_nemu.csv')
-    # obs = _mut_all[_mut_all['Label'] == 0].rename(
-    #     columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
-
     obs = pd.read_csv('external_datasets/raw_human_megatree.csv')
     obs = obs[(obs.TypeRef == 'CDS') & (obs.Label == 0)]\
         .rename(columns={'Aa1': 'aa1', 'Aa2': 'aa2', 'ProbaFull': 'count'})
-
 
     metrics_total = []
     i = 0
     nrows, ncols = 4, 4
     fig, axs = plt.subplots(nrows, ncols, figsize=(ncols*4, nrows*4-1.5))
     for gene in spectra.index.unique():
-    # for gene in ['ND6']: # for debugging
-        # if gene == 'ATP8':
-        #     continue
         cur_spectrum = spectra.loc[gene]
-        exp_aa_subst, _ = prepare_exp_aa_subst(cur_spectrum, 'MutSpec', 1)
+        exp_aa_subst, _ = prepare_exp_aa_subst(cur_spectrum, 'MutSpec', 2)
         
         cur_obs = obs[obs['GeneRef'] == gene].copy()
-        cur_obs = cur_obs[(cur_obs.aa1 != '*') & (cur_obs.aa2 != '*')]
         print(gene, len(cur_obs), '##################')
 
         # for total sites set
