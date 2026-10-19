@@ -18,7 +18,7 @@ Shared code is the `aminoacidshift` package in [`src/aminoacidshift`](src/aminoa
 | [`data/reference`](data/reference) | Human and RefSeq mitochondrial GenBank files, species lineages |
 | [`site`](site) | Short Quarto pages for the current figures and tables |
 
-Sibling projects are not vendored. Override them with `AAS_NEMU_192`, `AAS_MEGATREE`, `AAS_CANCER_MUTSPEC`, or `AAS_NEMU_PIPELINE` when the default relative paths are wrong. `raw_human_megatree.tsv` is gitignored.
+Sibling projects are not vendored. They are expected next to this repository (`../192`, `../human_mtDNA_megatree`, `../mtdnaMutSpecOfCancers`, `../nemu-pipeline`). Override those locations with `AAS_NEMU_192`, `AAS_MEGATREE`, `AAS_CANCER_MUTSPEC`, or `AAS_NEMU_PIPELINE`. `raw_human_megatree.tsv` is gitignored.
 
 Saved metric tables and PDFs are the current results. Re-running the fit scripts will not reproduce those files exactly: `calc_metrics` now reports centered-log-ratio correlation, and a few corrections are listed in [`docs/open_questions.md`](docs/open_questions.md).
 
@@ -29,7 +29,7 @@ uv sync --extra notebooks --extra site
 uv run jupyter lab
 ```
 
-Python is 3.13. Mutational spectra come from `pymutspec` 0.0.15, which no longer depends on `ete3`.
+Python is 3.13. Mutational spectra come from `pymutspec` 0.0.15.
 
 The count-model helpers in `aminoacidshift.glm` are an adaptation of the E. coli analysis from Cano et al. ([PNAS 2022](https://doi.org/10.1073/pnas.2119720119), [Mutbias2022](https://github.com/alejvcano/Mutbias2022)). Refit that table with `uv run python -m aminoacidshift.glm --input dataEcoli.txt`.
 

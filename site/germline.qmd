@@ -4,7 +4,7 @@ resources:
   - interactive/megatree_r2.html
 ---
 
-Per-gene fit of the human mitochondrial megatree. Bars use the saved `megatree_fit_metrics.csv`, which still has the previous correlation columns.
+Per-gene fit of the human mitochondrial megatree, refit with the current metrics. Hover a bar for the centered-log-ratio Pearson correlation (`pearson_corr_clr`).
 
 ```{=html}
 <iframe src="interactive/megatree_r2.html" title="Megatree R2 by gene" style="width:100%;height:520px;border:0;"></iframe>

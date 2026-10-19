@@ -5,3 +5,6 @@ raw_*
 .venv/
 site/_site/
 **/.quarto/
+
+/.quarto/
+**/*.quarto_ipynb

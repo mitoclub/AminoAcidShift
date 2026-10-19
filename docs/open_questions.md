@@ -1,12 +1,12 @@
 # Open questions
 
-These items can change a scientific conclusion. The code changes below are in place. The committed CSVs and PDFs were not regenerated.
+These items can change a scientific conclusion. The code changes below are in place. Megatree, cross-dataset, and equilibrium tables were regenerated with the current metrics. PCAWG tables were not, because the missense table and tumour-spectra catalogs are not in the tree.
 
-## Fixed in code, results not regenerated
+## Fixed in code
 
-- Whole-genome PCAWG spectra in `apply_neutral_model_nuclear_somatic.py` were divided by the exome nucleotide frequencies. They now use the genomic frequencies. The saved `nuclear_somatic_fit_metrics.csv` still reflects the old normalization.
-- `MutSpecVertebrates12.csv.gz` contains CO1, CO3, Cytb, and ND2, not ND1. Mammal ND1 rows were previously scored with the ND2 spectrum. The batch script now skips `mam_nd1_gtr` and `mam_nd1_unr` until an ND1 spectrum exists. The committed `datasets_fit_metrics.csv` still contains those two rows.
-- `calc_metrics` returns `pearson_corr_clr`, the Pearson correlation of centered log-ratios. Callers that read `pearson_corr` from a fresh metrics dict now use that key. Saved tables still have the old columns (`pearson_corr`, `slope`, `ks_stat`, and others).
+- Whole-genome PCAWG spectra in `apply_neutral_model_nuclear_somatic.py` were divided by the exome nucleotide frequencies. They now use the genomic frequencies. `nuclear_somatic_fit_metrics.csv` still reflects the old normalization.
+- `MutSpecVertebrates12.csv.gz` contains CO1, CO3, Cytb, and ND2, not ND1. Mammal ND1 rows were previously scored with the ND2 spectrum. The batch script now skips a run when the observed table or the 12-class spectrum is missing. The regenerated `datasets_fit_metrics.csv` has no mammal rows and no ND1 rows.
+- `calc_metrics` returns `pearson_corr_clr`, the Pearson correlation of centered log-ratios. Regenerated megatree and cross-dataset tables use that column. The PCAWG table still has `pearson_corr`, `slope`, and `ks_stat`.
 - Negative-binomial summaries are taken from the GLM result whose model name is `Negative Binomial`. If that fit fails, the `nb_*` columns are omitted instead of reading whichever model finished second.
 - Expected substitution labels (`sbs`) are joined with `|`. They are no longer produced by summing a string column.
 - `fit_glm` drops rows with `rate_exp <= 0` before taking the logarithm.

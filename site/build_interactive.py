@@ -32,10 +32,10 @@ def main() -> None:
     fit = px.scatter(
         datasets,
         x="mut_count",
-        y="pearson_corr",
+        y="pearson_corr_clr",
         text="dataset",
         hover_data=["r2", "spearman_corr", "mut_type_count"],
-        title="Saved neutral-model fit across mtDNA datasets",
+        title="Neutral-model fit across mtDNA datasets",
     )
     fit.update_traces(textposition="top center")
     write(fit, "datasets_fit.html")
@@ -45,7 +45,7 @@ def main() -> None:
         megatree,
         x="gene",
         y="r2",
-        hover_data=["mut_count", "pearson_corr"],
+        hover_data=["mut_count", "pearson_corr_clr"],
         title="Human germline fit by gene",
     )
     write(genes, "megatree_r2.html")

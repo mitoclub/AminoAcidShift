@@ -43,7 +43,7 @@ def read_aa_counts_from_gb(path: str) -> dict:
                             .apply(Counter).to_dict()).T.fillna(0).astype(int)
 
     aa_counts_total = genes_aa_counts_df[genes_aa_counts_df.index != 'ND6']\
-        .sum(0).rename('TOTALH').to_frame().T
+        .sum(axis=0).rename('TOTALH').to_frame().T
     genes_aa_counts_df = pd.concat([genes_aa_counts_df, aa_counts_total], axis=0)\
         .rename(columns=amino_acid_codes)
     return genes_aa_counts_df.T.to_dict()
@@ -67,20 +67,20 @@ def main():
     #     './external_datasets/raw_global_vert_cytb_mutations.tsv', sep='\t'
     # ).query('Label == 0').rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
 
-    mammals_dir = EXTERNAL / "mammals_mutations"
-    mammals_cytb_mut_gtr = pd.read_csv(mammals_dir / "cytb_gtr.tsv", sep="\t")
-    mammals_cytb_mut_unr = pd.read_csv(mammals_dir / "cytb_unrest.tsv", sep="\t")
-    mammals_cytb_mut_gtr = mammals_cytb_mut_gtr.query('Label == 0 & ProbaFull > 0.3')\
-        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
-    mammals_cytb_mut_unr = mammals_cytb_mut_unr.query('Label == 0 & ProbaFull > 0.3')\
-        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+    def _load_mammal_mutations(filename):
+        path = EXTERNAL / "mammals_mutations" / filename
+        if not path.exists():
+            print(f"Skipping {path}: file not found")
+            return None
+        table = pd.read_csv(path, sep="\t")
+        return table.query("Label == 0 & ProbaFull > 0.3").rename(
+            columns={"RefAa": "aa1", "AltAa": "aa2", "ProbaFull": "count"}
+        )
 
-    mammals_nd1_mut_gtr = pd.read_csv(mammals_dir / "nd1_gtr.tsv", sep="\t")
-    mammals_nd1_mut_unr = pd.read_csv(mammals_dir / "nd1_unrest.tsv", sep="\t")
-    mammals_nd1_mut_gtr = mammals_nd1_mut_gtr.query('Label == 0 & ProbaFull > 0.3')\
-        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
-    mammals_nd1_mut_unr = mammals_nd1_mut_unr.query('Label == 0 & ProbaFull > 0.3')\
-        .rename(columns={'RefAa': 'aa1', 'AltAa': 'aa2', 'ProbaFull': 'count'})
+    mammals_cytb_mut_gtr = _load_mammal_mutations("cytb_gtr.tsv")
+    mammals_cytb_mut_unr = _load_mammal_mutations("cytb_unrest.tsv")
+    mammals_nd1_mut_gtr = _load_mammal_mutations("nd1_gtr.tsv")
+    mammals_nd1_mut_unr = _load_mammal_mutations("nd1_unrest.tsv")
 
 
     ## VERTEBRATES Cytb and ND2 germline mutations
@@ -161,30 +161,24 @@ def main():
     # global_chordates_ms12 = pd.read_csv("external_datasets/global_cytb_chordates_ms12syn.tsv", sep='\t')
 
     # use mean chordates ms for global dataset
-    total_spectra = [
-        chordates_species_ms12_Cytb, chordates_species_ms12_Cytb, 
-        chordates_species_ms12_ND1, chordates_species_ms12_ND1, 
-        chordates_species_ms12_Cytb, chordates_species_ms12_ND2,
-        megatree_ms12, cancer_ms12, cancer_ms12, cancer_ms12, cancer_ms12]
-    total_obs = [
-        mammals_cytb_mut_gtr, mammals_cytb_mut_unr, 
-        mammals_nd1_mut_gtr, mammals_nd1_mut_unr, 
-        chordates_species_mut_Cytb, chordates_species_mut_ND2, 
-        megatree_mut, cancer_mut, gtex_mut, mitomap_mut, mitomap_pathogenic]
-    total_freqs_genes = ['CYTB', 'CYTB', 'ND1', 'ND1', 'CYTB', 'ND2', 
-                         'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH', 'TOTALH']
-    total_labels = [
-        'mam_cytb_gtr', 'mam_cytb_unr',
-        'mam_nd1_gtr', 'mam_nd1_unr',
-        'chordates_species_Cytb', 'chordates_species_ND2', 
-        'megatree', 'cancer', 'gtex', 'mitomap', 'mitomap_pathogenic']
-
-    if chordates_species_ms12_ND1 is None:
-        keep = [label not in {"mam_nd1_gtr", "mam_nd1_unr"} for label in total_labels]
-        total_spectra = [item for item, ok in zip(total_spectra, keep) if ok]
-        total_obs = [item for item, ok in zip(total_obs, keep) if ok]
-        total_freqs_genes = [item for item, ok in zip(total_freqs_genes, keep) if ok]
-        total_labels = [item for item, ok in zip(total_labels, keep) if ok]
+    runs = [
+        ("mam_cytb_gtr", mammals_cytb_mut_gtr, chordates_species_ms12_Cytb, "CYTB"),
+        ("mam_cytb_unr", mammals_cytb_mut_unr, chordates_species_ms12_Cytb, "CYTB"),
+        ("mam_nd1_gtr", mammals_nd1_mut_gtr, chordates_species_ms12_ND1, "ND1"),
+        ("mam_nd1_unr", mammals_nd1_mut_unr, chordates_species_ms12_ND1, "ND1"),
+        ("chordates_species_Cytb", chordates_species_mut_Cytb, chordates_species_ms12_Cytb, "CYTB"),
+        ("chordates_species_ND2", chordates_species_mut_ND2, chordates_species_ms12_ND2, "ND2"),
+        ("megatree", megatree_mut, megatree_ms12, "TOTALH"),
+        ("cancer", cancer_mut, cancer_ms12, "TOTALH"),
+        ("gtex", gtex_mut, cancer_ms12, "TOTALH"),
+        ("mitomap", mitomap_mut, cancer_ms12, "TOTALH"),
+        ("mitomap_pathogenic", mitomap_pathogenic, cancer_ms12, "TOTALH"),
+    ]
+    runs = [(label, obs, spec, gene) for label, obs, spec, gene in runs if obs is not None and spec is not None]
+    total_labels = [label for label, _, _, _ in runs]
+    total_obs = [obs for _, obs, _, _ in runs]
+    total_spectra = [spec for _, _, spec, _ in runs]
+    total_freqs_genes = [gene for _, _, _, gene in runs]
 
     metrics_total = []
     for ms12, obs, freqs_gene, dataset in zip(
