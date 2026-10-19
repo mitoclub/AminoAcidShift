@@ -1,0 +1,9 @@
+---
+title: "Vertebrate substitutions"
+---
+
+Nonsynonymous substitutions counted from vertebrate mtDNA alignments. The species table used downstream is `analyses/02_vertebrates/dataset/obs_muts.csv`.
+
+- [Alignment length distribution](../analyses/02_vertebrates/msa_ncols_distributions.pdf)
+- [Species table](../analyses/02_vertebrates/dataset/info.csv)
+- [Observed mutations](../analyses/02_vertebrates/dataset/obs_muts.csv)

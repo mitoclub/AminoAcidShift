@@ -1,7 +1,10 @@
 {
+    "venvPath": ".",
+    "venv": ".venv",
+    "extraPaths": ["src"],
     "exclude": [
         "**/__pycache__",
-        "data/chordata2",
-        "data/decomp",
-      ],
+        ".venv",
+        "data"
+    ]
 }

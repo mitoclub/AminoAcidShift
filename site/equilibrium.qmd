@@ -1,0 +1,17 @@
+---
+title: "Equilibrium frequencies"
+resources:
+  - interactive/expected_aa.html
+---
+
+The vertebrate mitochondrial spectrum implies an equilibrium amino-acid composition and an expected substitution matrix. Gene strand across phyla is summarized from RefSeq mtDNA.
+
+```{=html}
+<iframe src="interactive/expected_aa.html" title="Expected amino-acid rates" style="width:100%;height:640px;border:0;"></iframe>
+```
+
+Hover a cell for the amino-acid pair and its expected rate. Diagonal identities are omitted. The matrix is the saved file `analyses/01_equilibrium/data/exp_aa_subst_vert.csv`.
+
+- [Equilibrium amino-acid frequencies](../analyses/01_equilibrium/figures/aa_eq_freqs_vert_cytb.pdf)
+- [Observed minus equilibrium, five classes](../analyses/01_equilibrium/figures/aa_diff_freqs_5cls_cytb.pdf)
+- [Class heatmap](../analyses/01_equilibrium/figures/aa_eq_freqs_cls_heatmap.pdf)

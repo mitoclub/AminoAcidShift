@@ -1,19 +1,41 @@
 # AminoAcidShift
 
-## Main Points of the project
+The mitochondrial light-strand spectrum is strongly asymmetric: G to A and T to C are in excess. That spectrum predicts a long-term flow from loser amino acids (Leu, Phe, Cys, Trp, Gly, Val) toward gainer amino acids (Pro, His, Gln, Asn, Lys, Thr). This repository tests that prediction where mutation is weak relative to selection and where mutation outruns it.
 
-1. datasets_fit_metrics.csv
-2. gainers fraction in different taxa
-3. Cytb and others (are essential) have differences between species that are neutral
-4. Human big dataset on all mt genes
-5. Population polymorphisms
-6. codon usage bias in human mtDNA (estimate codons that are close to their equilibrium frequencies - this can be the measure of stability)
+## Layout
 
-## Thesis
+Shared code is the `aminoacidshift` package in [`src/aminoacidshift`](src/aminoacidshift). Each scientific question has its own folder. Run a notebook or script with that folder as the working directory, or run the scripts directly: they locate data through `aminoacidshift.paths`.
 
-It has been shown that the rates of reciprocal amino acid substitutions in prokaryotic and eukaryotic organisms are not balanced, leading to the long-term increase (i.e. ‘gainers’) or decrease (i.e. ‘losers’) in the frequency of some amino acids. However, the evolutionary driving forces establishing this trend are still unknown. Here, focusing on the strongly asymmetrical mutational spectrum of the mitochondrial genome (an excess of G to A and T to C, light chain notation), we predicted the preferential direction of amino acid substitutions from losers (LeuTT, Phe, Cys, Trp, Gly, and Val) to gainers (Pro, His, Gln, Asn, Lys, and Thr). Analysing collections of nonsynonymous mtDNA mutations from human cancers  (PCAWG), human pathogenic mutations (MitoMap database), human population polymorphisms, and mtDNA polymorphism from hundreds of vertebrate species we observed that the vast majority of substitutions are indeed in the expected direction: from losers to gainers. Moreover, the observed bias is the most pronounced in datasets where mutagenesis is stronger than selection (cancer and human pathogenic mutations for example). Comparing the amino acid composition of mtDNA genes between orthologs of mitochondrial genes in alpha-proteobacteria, fungi, plants, invertebrates, and five classes of vertebrates, we observed a global billion-year trend: losers become rarer while gainers become more frequent among these taxa. These results are in line with the accumulation of slightly-deleterious variants (i.e. from losers to gainers) in mtDNA from the moment of endosymbiosis emergence till the current days due to genetic drift, which becomes stronger from bacteria to vertebrates.
+| Directory | Question |
+| --- | --- |
+| [`analyses/01_equilibrium`](analyses/01_equilibrium) | Equilibrium nucleotide, codon, and amino-acid frequencies, and how gene strand is arranged across taxa |
+| [`analyses/02_vertebrates`](analyses/02_vertebrates) | Nonsynonymous mtDNA substitutions across vertebrate species |
+| [`analyses/03_human_germline`](analyses/03_human_germline) | Human germline mtDNA, gene by gene, from the megatree |
+| [`analyses/04_datasets`](analyses/04_datasets) | One neutral-model comparison across mtDNA datasets |
+| [`analyses/05_pcawg`](analyses/05_pcawg) | Nuclear somatic missense mutations (PCAWG), the control for that comparison |
+| [`analyses/archive`](analyses/archive) | Viral spectrum script kept out of the mtDNA paper |
+| [`data/external`](data/external) | Downloaded tables (MitoMap, gTEX, megatree) |
+| [`data/reference`](data/reference) | Human and RefSeq mitochondrial GenBank files, species lineages |
+| [`site`](site) | Short Quarto pages for the current figures and tables |
 
-## additinal resources
+Sibling projects are not vendored. Override them with `AAS_NEMU_192`, `AAS_MEGATREE`, `AAS_CANCER_MUTSPEC`, or `AAS_NEMU_PIPELINE` when the default relative paths are wrong. `raw_human_megatree.tsv` is gitignored.
 
-1. https://pmc.ncbi.nlm.nih.gov/articles/PMC1456165/ - last table contains most popular AA changes in human
-2. some paper about mutations in the mitochondrial genome of C. elegans
+Saved metric tables and PDFs are the current results. Re-running the fit scripts will not reproduce those files exactly: `calc_metrics` now reports centered-log-ratio correlation, and a few corrections are listed in [`docs/open_questions.md`](docs/open_questions.md).
+
+## Setup
+
+```bash
+uv sync --extra notebooks --extra site
+uv run jupyter lab
+```
+
+Python is 3.13. Mutational spectra come from `pymutspec` 0.0.15, which no longer depends on `ete3`.
+
+The count-model helpers in `aminoacidshift.glm` are an adaptation of the E. coli analysis from Cano et al. ([PNAS 2022](https://doi.org/10.1073/pnas.2119720119), [Mutbias2022](https://github.com/alejvcano/Mutbias2022)). Refit that table with `uv run python -m aminoacidshift.glm --input dataEcoli.txt`.
+
+Preview the website, without refitting models, from the repository root:
+
+```bash
+uv run python site/build_interactive.py
+quarto preview
+```

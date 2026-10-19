@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aminoacidshift"
+version = "0.1.0"
+description = "Amino-acid substitution trends under asymmetric mutational spectra"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "biopython",
+    "tqdm",
+    "scipy",
+    "scikit-learn",
+    "statsmodels",
+    "pingouin",
+    "pymutspec==0.0.15",
+]
+
+[project.optional-dependencies]
+notebooks = ["ipykernel", "jupyterlab"]
+site = ["plotly"]

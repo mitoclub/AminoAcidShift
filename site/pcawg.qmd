@@ -1,0 +1,16 @@
+---
+title: "PCAWG nuclear control"
+resources:
+  - interactive/pcawg_fit.html
+---
+
+Nuclear somatic missense mutations are the control for the mtDNA comparison. Points are the saved per-sample neutral fits. Whole-genome rows in that file were exposure-corrected with exome nucleotide counts; the script now uses genomic counts, and this figure has not been refit.
+
+```{=html}
+<iframe src="interactive/pcawg_fit.html" title="PCAWG fit" style="width:100%;height:560px;border:0;"></iframe>
+```
+
+- [Sample spectra](../analyses/05_pcawg/figures/ms12.pdf)
+- [Sample fits](../analyses/05_pcawg/figures/neutral_model_fit_nuclear_somatic.pdf)
+- [Cancer-type spectra](../analyses/05_pcawg/figures/ms12cancers.pdf)
+- [Cancer-type fits](../analyses/05_pcawg/figures/neutral_model_fit_nuclear_somatic_cancers.pdf)

@@ -1,0 +1,35 @@
+project:
+  type: website
+  output-dir: site/_site
+  render:
+    - site/index.qmd
+    - site/equilibrium.qmd
+    - site/vertebrates.qmd
+    - site/germline.qmd
+    - site/datasets.qmd
+    - site/pcawg.qmd
+
+website:
+  title: "AminoAcidShift"
+  navbar:
+    left:
+      - href: site/index.qmd
+        text: Home
+      - href: site/equilibrium.qmd
+        text: Equilibrium
+      - href: site/vertebrates.qmd
+        text: Vertebrates
+      - href: site/germline.qmd
+        text: Germline
+      - href: site/datasets.qmd
+        text: Datasets
+      - href: site/pcawg.qmd
+        text: PCAWG
+
+format:
+  html:
+    toc: true
+    theme: cosmo
+
+execute:
+  enabled: false

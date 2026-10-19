@@ -1,0 +1,13 @@
+---
+title: "Cross-dataset comparison"
+resources:
+  - interactive/datasets_fit.html
+---
+
+One neutral model scored on mammal Cytb, vertebrate genes, the human megatree, cancer and gTEX mtDNA, and MitoMap. Points are the saved `datasets_fit_metrics.csv`.
+
+```{=html}
+<iframe src="interactive/datasets_fit.html" title="Dataset fit" style="width:100%;height:560px;border:0;"></iframe>
+```
+
+Hover a point for the dataset name, correlation, and mutation count. The ND1 rows in this file were scored with the ND2 spectrum; see `docs/open_questions.md`.

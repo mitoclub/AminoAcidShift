@@ -1,0 +1,13 @@
+---
+title: "AminoAcidShift"
+---
+
+The mitochondrial light-strand spectrum is strongly asymmetric: G to A and T to C are in excess. That spectrum predicts a long-term flow from loser amino acids (Leu, Phe, Cys, Trp, Gly, Val) toward gainer amino acids (Pro, His, Gln, Asn, Lys, Thr).
+
+These pages show the tables and figures currently in the repository. They do not refit the models. When an analysis changes, rerun `uv run python site/build_interactive.py` and render this site again.
+
+- [Equilibrium frequencies](equilibrium.qmd) and gene strand
+- [Vertebrate substitutions](vertebrates.qmd)
+- [Human germline mtDNA](germline.qmd)
+- [Cross-dataset comparison](datasets.qmd)
+- [PCAWG nuclear control](pcawg.qmd)
