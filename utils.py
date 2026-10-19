@@ -9,9 +9,31 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 from pymutspec.annotation import CodonAnnotation
 from pymutspec.constants import possible_codons
 
+from ecoli_glm import (
+    fit_poisson,
+    fit_negative_binomial,
+    fit_zero_inflated_poisson,
+    fit_zero_inflated_nb,
+    predicted_response,
+)
+
 alphabet = 'ACGT'
 transitions = ['A>G', 'C>T', 'G>A', 'T>C']
 transversions = ['A>C', 'A>T', 'C>A', 'C>G', 'G>C', 'G>T', 'T>A', 'T>G']
+color_mapping12 = {
+    "C>A": "deepskyblue",
+    "G>T": "deepskyblue",
+    "C>G": "black",
+    "G>C": "black",
+    "C>T": "red",
+    "G>A": "red",
+    "T>A": "silver",
+    "A>T": "silver",
+    "T>C": "yellowgreen",
+    "A>G": "yellowgreen",
+    "T>G": "pink",
+    "A>C": "pink",
+}
 amino_acid_codes = {
     "A": "Ala",
     "R": "Arg",
@@ -120,30 +142,24 @@ def cdn_spectrum_to_matrix(df_changes: pd.DataFrame):
 
 
 def get_equilibrium_probabilities(Pmatrix: np.ndarray):
+    """
+    Calculates equilibrium probabilities using the eigenvector method.
+    Solves pi @ Q = 0  =>  Q.T @ pi.T = 0
+    """
     Q = Pmatrix.copy()
+    # Ensure Q is a valid generator (redundant if Q is already valid, but safe)
     Q = Q - np.diag(np.sum(Q, axis=1))
 
+    # Find eigenvalues and eigenvectors of Transpose(Q)
     values, vectors = np.linalg.eig(Q.T)
+    
+    # Extract eigenvector associated with eigenvalue ~ 0
+    # Note: Use real parts to handle potential complex numerical noise
     pi = vectors[:, np.isclose(values, 0)].real.flatten()
+    
+    # Normalize to sum to 1
     pi = pi / pi.sum()
     return pi
-
-
-def simulate_markov_continual(
-        transition_Pmatrix: np.ndarray, initial_vector: np.ndarray, 
-        num_iterations: int, delta_t=0.01):
-    pi = initial_vector.copy()
-    data = [pi.copy()]
-    Q = transition_Pmatrix.copy()
-    Q = Q - np.diag(np.sum(Q, axis=1))
-    for _ in range(num_iterations):
-        pi_new = pi + delta_t * (pi @ Q)
-        pi_new = pi_new / pi_new.sum()
-        data.append(pi_new.copy())
-        if np.linalg.norm(pi_new - pi) < 1e-8:
-            break
-        pi = pi_new
-    return data
 
 
 def get_equilibrium_freqs(spectrum: pd.DataFrame, rate_col='MutSpec', gc=1):
@@ -218,6 +234,17 @@ def get_equilibrium_freqs_rnd(gc=1, tstv_ratio=2.0):
     return rnd_spectrum, res
 
 
+def __split_summed_sbs(sbs):
+    if len(sbs) == 3:
+        return sbs
+    new_sbs = ''
+    for i, c in enumerate(sbs):
+        if i>0 and i % 3 == 0:
+            new_sbs += '|'
+        new_sbs += c
+    return new_sbs
+
+
 def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
     df_changes = collect_possible_changes(gc=gc)
     spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
@@ -225,13 +252,30 @@ def prepare_exp_aa_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_pat
     df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
 
     ## Calculate expected AA substitutions matrix
-    exp_aa_subst = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
-        .groupby(['aa1', 'aa2'])['rate'].sum().reset_index()
+    # exp_aa_subst = df_changes[(df_changes.aa1 != '*')&(df_changes.aa2 != '*')]\
+    #     .groupby(['aa1', 'aa2'])['rate'].sum().reset_index()
+    exp_aa_subst = df_changes.query('aa1 != aa2 & aa1 != "*" & aa2 != "*"')\
+        .groupby(['aa1', 'aa2', 'sbs'])['rate'].sum().reset_index()\
+            .groupby(['aa1', 'aa2']).sum().reset_index()
+    exp_aa_subst['sbs'] = exp_aa_subst['sbs'].apply(__split_summed_sbs)
     
     if save_path:
         exp_aa_subst.to_csv(save_path, float_format='%g', index=False)
     exp_aa_subst_matrix = exp_aa_subst.pivot(index='aa1', columns='aa2', values='rate').fillna(0.)
     return exp_aa_subst, exp_aa_subst_matrix
+
+
+def prepare_exp_cdn_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
+    df_changes = collect_possible_changes(gc=gc)
+    spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
+
+    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
+    exp_cdn_subst = df_changes.groupby(['cdn1', 'cdn2'])['rate'].sum().reset_index()
+    
+    if save_path:
+        exp_cdn_subst.to_csv(save_path, float_format='%g', index=False)
+    exp_cdn_subst_matrix = exp_cdn_subst.pivot(index='cdn1', columns='cdn2', values='rate').fillna(0.)
+    return exp_cdn_subst, exp_cdn_subst_matrix
 
 
 def prepare_exp_aa_subst_codons(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None, codon_pos='all'): 
@@ -258,22 +302,6 @@ def prepare_exp_aa_subst_codons(spectrum: pd.DataFrame, rate_col='rate', gc=1, s
     return exp_aa_subst, exp_aa_subst_matrix
 
 
-def prepare_exp_cdn_subst(spectrum: pd.DataFrame, rate_col='rate', gc=1, save_path=None):
-    df_changes = collect_possible_changes(gc=gc)
-    spectrum_dict = spectrum.set_index('Mut')[rate_col].to_dict()
-
-    df_changes['rate'] = df_changes['sbs'].map(spectrum_dict)
-
-    ## Calculate expected AA substitutions matrix
-    exp_cdn_subst = df_changes[(df_changes.cdn1 != '*')&(df_changes.cdn2 != '*')]\
-        .groupby(['cdn1', 'cdn2'])['rate'].sum().reset_index()
-    
-    if save_path:
-        exp_cdn_subst.to_csv(save_path, float_format='%g', index=False)
-    exp_cdn_subst_matrix = exp_cdn_subst.pivot(index='cdn1', columns='cdn2', values='rate').fillna(0.)
-    return exp_cdn_subst, exp_cdn_subst_matrix
-
-
 def prepare_rnd_exp_aa_subst(gc=1, tstv_ratio=None, save_path=None):
     """Use random spectrum for aa substitutions matrix generation"""
     rnd_spectrum = get_random_spectrum(tstv_ratio=tstv_ratio)
@@ -289,12 +317,17 @@ def prepare_aa_subst(obs_df: pd.DataFrame, exp_aa_subst: pd.DataFrame, ref_aa_fr
                         (aa_subst['aa2'] != '*')]
     aa_subst['aa1'] = aa_subst['aa1'].map(amino_acid_codes)
     aa_subst['aa2'] = aa_subst['aa2'].map(amino_acid_codes)
+    
+    # add expected rates
+    aa_subst = aa_subst.merge(exp_aa_subst.rename(columns={'rate': 'rate_exp'}), 'right').fillna(0)
+    aa_subst = aa_subst[aa_subst['aa1'] != aa_subst['aa2']]
+
+    # scale observed counts by reference amino acid frequencies
     ref_aa_total_cnt = sum([x for x in ref_aa_freqs.values() if x > 0])
     aa_subst['ref_aa1_freq'] = aa_subst['aa1'].map(ref_aa_freqs) / ref_aa_total_cnt
     aa_subst['nobs_scaled'] = (aa_subst['nobs'] / aa_subst['ref_aa1_freq']).replace(np.inf, np.nan)
     aa_subst['nobs_scaled'] = aa_subst['nobs_scaled'] / aa_subst['nobs_scaled'].sum() * aa_subst['nobs'].sum()
-    aa_subst = aa_subst.merge(exp_aa_subst.rename(columns={'rate': 'rate_exp'}), 'right').fillna(0)
-    aa_subst = aa_subst[aa_subst['aa1'] != aa_subst['aa2']]
+
     aa_subst['nexp'] = aa_subst['rate_exp'] / aa_subst['rate_exp'].sum() * aa_subst['nobs_scaled'].sum()
     aa_subst['diff'] = aa_subst['nobs_scaled'] - aa_subst['nexp']
     aa_subst['pe'] = aa_subst['diff'] / aa_subst['nobs_scaled'] * 100  # %
@@ -303,6 +336,19 @@ def prepare_aa_subst(obs_df: pd.DataFrame, exp_aa_subst: pd.DataFrame, ref_aa_fr
     aa_subst['obs_relative_freq'] = (aa_subst['nobs_freqs'] / aa_subst['nexp_freqs'])
     aa_subst = aa_subst.merge(grantham_long, 'left')
     return aa_subst
+
+
+def transform_clr(v, func_log=np.log):
+    """
+    Centered log-ratio transformation for compositional data.
+    """
+    v = np.asarray(v)
+    if np.any(v <= 0) and func_log == np.log:
+        raise ValueError("All elements of input vector must be positive for CLR transformation.")
+    log_v = func_log(v)
+    mean_log_v = np.mean(log_v)
+    clr_v = log_v - mean_log_v
+    return clr_v
 
 
 def calc_accuracy(y_true, y_pred):
@@ -368,64 +414,111 @@ def weighted_average_percentage_error(y_true, y_pred):
     return mean_absolute_percentage_error(y_true, y_pred, sample_weight=y_true)
 
 
+def fit_glm(aa_subst: pd.DataFrame):
+    # required columns: endog "events", predictor (exog) "log_mutAll", offset "log_frequency"
+    data = aa_subst[['aa1', 'aa2', 'sbs']]
+    data['events'] = aa_subst['nobs'].astype(int)
+    data['log_mutAll'] = np.log(aa_subst['rate_exp'])
+    data['log_frequency'] = np.log(aa_subst['ref_aa1_freq'])
+
+    poisson = fit_poisson(data)
+    nb = fit_negative_binomial(data, ["log_mutAll"], maxiter=50)
+
+    try:
+        zip_poisson = fit_zero_inflated_poisson(data)
+    except Exception as exc:
+        zip_poisson = None
+        print(f"Zero-inflated Poisson failed: {exc}")
+
+    try:
+        zinb = fit_zero_inflated_nb(data, ["log_mutAll"])
+    except Exception as exc:
+        zinb = None
+        print(f"Zero-inflated negative binomial failed: {exc}")
+
+    results = []
+    for model, name in zip([poisson, nb, zip_poisson, zinb], ['Poisson', 'Negative Binomial', 'Zero-inflated Poisson', 'Zero-inflated Negative Binomial']):
+        if model is not None:
+            try:
+                predevents = predicted_response(model, data, ['log_mutAll'])
+                pearson_corr, pearson_p = pearsonr(data['events'], predevents)
+                spearman_corr, spearman_p = spearmanr(data['events'], predevents)
+                r2 = r2_score(data['events'], predevents)
+            except Exception as exc:
+                print(f"Failed to calculate metrics for {name}: {exc}")
+                continue
+            metrics = {
+                "model": name,
+                "r2": r2,
+                "pearson_corr": pearson_corr,
+                "pearson_p": pearson_p,
+                "spearman_corr": spearman_corr,
+                "spearman_p": spearman_p,
+                "log_likelihood": model._results.llf,
+                "beta": model.params['log_mutAll'],
+                "beta_se": model.bse['log_mutAll'],
+            }
+            results.append(metrics)
+
+    predevents = predicted_response(nb, data, ['log_mutAll'])
+    data['predevents'] = predevents
+    return results, data
+
+
 def calc_metrics(aa_subst: pd.DataFrame):
-    aa_subst = aa_subst.dropna()
-    y_true = aa_subst.nobs_scaled
-    y_pred = aa_subst.nexp
+    aa_subst = aa_subst.dropna().query('rate_exp > 0')
+    nobs_clr = transform_clr(aa_subst['nobs_freqs'], np.log1p)
+    nexp_clr = transform_clr(aa_subst['nexp_freqs'], np.log1p)
 
-    # 2. Kolmogorov-Smirnov test
-    ks_stat, ks_p = ks_2samp(y_true, y_pred)
-
-    # 3. Log-Likelihood
-    log_likelihood = np.sum(aa_subst.nobs_freqs * np.log(aa_subst.nexp_freqs) + \
-                                (1 - aa_subst.nobs_freqs) * np.log(1 - aa_subst.nexp_freqs))
+    log_likelihood = np.sum(aa_subst['nobs_freqs'] * np.log(aa_subst['nexp_freqs']) + \
+                                (1 - aa_subst['nobs_freqs']) * np.log(1 - aa_subst['nexp_freqs']))
 
     # 4. RMSE
     try:
-        rmse = mean_squared_error(aa_subst.nobs_freqs, aa_subst.nexp_freqs) ** 0.5
+        rmse_clr = mean_squared_error(nobs_clr, nexp_clr) ** 0.5
     except:
-        rmse = np.nan
+        rmse_clr = np.nan
 
-    mask = y_true > 0
-    mape = mean_absolute_percentage_error(y_true[mask], y_pred[mask])
-    wape = weighted_average_percentage_error(y_true[mask], y_pred[mask])
+    mask = aa_subst['nobs'] > 0
+    mape = mean_absolute_percentage_error(aa_subst['nobs_freqs'][mask], aa_subst['nexp_freqs'][mask])
+    wape = weighted_average_percentage_error(aa_subst['nobs_freqs'][mask], aa_subst['nexp_freqs'][mask])
 
     # Spearman's rank correlation coefficient
-    spearman_corr, spearman_p = spearmanr(y_true, y_pred)
-    pearson_corr, pearson_p = pearsonr(y_true, y_pred)
+    spearman_corr, spearman_p = spearmanr(aa_subst['nobs_freqs'], aa_subst['nexp_freqs'])
+    pearson_corr_clr, pearson_p_clr = pearsonr(nobs_clr, nexp_clr)
 
     # total number of ns mutations
-    mut_count = np.sum(y_true)
+    mut_count = np.sum(aa_subst['nobs'])
 
-    slope, intercept = calc_slope(aa_subst.nobs_freqs, aa_subst.nexp_freqs)
-
-    r2 = r2_score(y_true, y_pred)
+    r2 = r2_score(aa_subst['nobs_freqs'], aa_subst['nexp_freqs'])
+    r2_clr = r2_score(nobs_clr, nexp_clr)
 
     corr_chem_vs_rel_freq = pearsonr(
-        aa_subst.obs_relative_freq, 
-        aa_subst.grantham_distance,
+        aa_subst['obs_relative_freq'], 
+        aa_subst['grantham_distance'],
     )
-    
+
     metrics = {
         'r2': r2,
+        'r2_clr': r2_clr,
         'mape': mape,
         'wape': wape,
-        'slope': slope,
-        'intercept': intercept,
         'spearman_corr': spearman_corr,
         'spearman_p': spearman_p,
-        'pearson_corr': pearson_corr,
-        'pearson_corr_squared': pearson_corr**2,
-        'pearson_p': pearson_p,
-        'ks_stat': ks_stat,
-        'ks_p': ks_p,
-        'rmse': rmse,
+        'pearson_corr_clr': pearson_corr_clr,
+        'pearson_p_clr': pearson_p_clr,
+        'rmse_clr': rmse_clr,
         'log_likelihood': log_likelihood,
         'mut_count': mut_count,
         'mut_type_count': aa_subst.nobs.ne(0).sum(),
         'corr_chem_vs_rel_freq': corr_chem_vs_rel_freq.correlation,
         'corr_chem_vs_rel_freq_pval': corr_chem_vs_rel_freq.pvalue,
     }
+    res_glm, _ = fit_glm(aa_subst)
+    res_glm_nb = {'nb_'+k: v for k,v in res_glm[1].items()}
+    
+    metrics.update(res_glm_nb)
+
     return metrics
 
 
@@ -651,7 +744,7 @@ def calculate_truncated_mean(alpha, scale, lower, upper):
 
 
 def categorize_site_rates_robust_plus_invariant(
-        mut_counts, n_categories=6, hotspot_percentile=99.0, plot=False):
+        mut_counts, n_categories=6, hotspot_percentile=99.0, plot=False, verbose=True):
     """
     Categorizes sites into:
     - Category 0: Invariable/Zero observed mutations
@@ -680,7 +773,8 @@ def categorize_site_rates_robust_plus_invariant(
     rates_normal = rates_nonzero[mask_normal]
     rates_hotspot = rates_nonzero[mask_hotspot]
     
-    print(f"Summary: {len(rates_zero)} zero sites, {len(rates_normal)} gamma sites, {len(rates_hotspot)} hotspots.")
+    if verbose:
+        print(f"Summary: {len(rates_zero)} zero sites, {len(rates_normal)} gamma sites, {len(rates_hotspot)} hotspots.")
 
     # 4. Fit Gamma to NORMAL (non-zero, non-hotspot) sites
     # IMPORTANT: floc=0 constraints the fit to start at 0, but since we removed exact zeros,
