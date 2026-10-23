@@ -4,8 +4,8 @@
 from collections import Counter
 from pathlib import Path
 
-from Bio import SeqIO
 import pandas as pd
+from Bio import SeqIO
 
 from aminoacidshift import amino_acid_codes
 from aminoacidshift.paths import NEMU_192

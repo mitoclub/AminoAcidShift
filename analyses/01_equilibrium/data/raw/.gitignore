@@ -1,0 +1,3 @@
+*.gz
+nemu_input/
+output/

@@ -9,8 +9,6 @@ equilibrium tables. See docs/open_questions.md.
 
 import numpy as np
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 from pymutspec.annotation import CodonAnnotation
 from pymutspec.constants import possible_codons
 
