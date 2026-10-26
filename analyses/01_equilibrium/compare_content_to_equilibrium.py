@@ -1,9 +1,7 @@
-"""Compare species- and gene-specific content with mutational equilibrium.
+"""Compare observed content with each species' own equilibrium.
 
-For each vertebrate mitochondrial spectrum, estimate nucleotide, codon, and
-amino-acid equilibrium and compare it with the coding sequences used to build
-that gene tree. The outgroup record is excluded. Observed frequencies are the
-unweighted mean across the remaining sequences.
+Inputs: data/nuc_freqs.csv, data/cdn_freqs.csv, and data/aa_freqs.csv.
+Outputs: data/distances.csv and the distance and frequency figures in figures/.
 """
 
 from pathlib import Path
@@ -16,190 +14,158 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from Bio import SeqIO
-from pymutspec.annotation import CodonAnnotation
-from tqdm import tqdm
+from matplotlib.backends.backend_pdf import PdfPages
 
-from aminoacidshift import (
+from derive_freqs import (
+    AA_ORDER,
+    CLASS_ORDER,
+    CLASS_PALETTE,
+    DATA_DIR,
+    FIGURE_DIR,
+    GENE_ORDER,
+    SUBSET_LABELS,
+    SUBSET_ORDER,
     alphabet,
-    amino_acid_codes,
-    cdn_spectrum_to_matrix,
-    collect_possible_changes,
-    get_equilibrium_probabilities,
-    nuc_spectrum_to_matrix,
-    prepare_exp_aa_subst,
+    read_frequencies,
 )
 
-HERE = Path(__file__).resolve().parent
-SPECTRUM_PATH = HERE / "data" / "raw" / "MutSpecVertebrates12.csv.gz"
-FASTA_ROOT = HERE / "data" / "raw" / "output"
-DATA_DIR = HERE / "data"
-FIGURE_DIR = HERE / "figures"
-GENETIC_CODE = 2
-
-GENE_ORDER = ["CO1", "CO3", "Cytb", "ND2"]
-CLASS_ORDER = ["Mammalia", "Aves", "Lepidosauria", "Amphibia", "Actinopteri"]
-SUBSET_ORDER = ["all", "pos1", "pos2", "pos3", "fourfold"]
-SUBSET_LABELS = {
-    "all": "CDS",
-    "pos1": "1st",
-    "pos2": "2nd",
-    "pos3": "3rd",
-    "fourfold": "Four-fold",
+NUC_DISTANCE_COLUMNS = {
+    "all": "nuc_all",
+    "pos1": "nuc_pos1",
+    "pos2": "nuc_pos2",
+    "pos3": "nuc_pos3",
+    "fourfold": "nuc_fourfold",
 }
-CLASS_PALETTE = {
-    "Mammalia": "#4C78A8",
-    "Aves": "#F58518",
-    "Lepidosauria": "#54A24B",
-    "Amphibia": "#E45756",
-    "Actinopteri": "#72B7B2",
-}
-BASE_INDEX = {base: index for index, base in enumerate(alphabet)}
-AA_ORDER = [name for letter, name in amino_acid_codes.items() if letter != "*"]
+DISTANCE_COLUMNS = list(NUC_DISTANCE_COLUMNS.values()) + ["cdn", "aa"]
+SOURCE_ORDER = ["Observed", "Equilibrium"]
+SOURCE_PALETTE = {"Observed": "#4C78A8", "Equilibrium": "#F58518"}
 
 
-def stationary(matrix: np.ndarray) -> np.ndarray | None:
-    """Equilibrium of a rate matrix, or None when it is not a distribution."""
-    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        return None
-    if not np.isfinite(matrix).all():
-        return None
-    try:
-        pi = get_equilibrium_probabilities(matrix.astype(float, copy=False))
-    except (ValueError, np.linalg.LinAlgError):
-        return None
-    if pi.shape != (matrix.shape[0],) or not np.isfinite(pi).all():
-        return None
-    if np.any(pi < -1e-8):
-        return None
-    pi = np.clip(pi, 0.0, None)
-    total = pi.sum()
-    if total <= 0:
-        return None
-    return pi / total
+def vector_distance(frame: pd.DataFrame, state_col: str, id_cols: list[str]) -> pd.Series:
+    observed = frame.pivot(index=id_cols, columns=state_col, values="obs_freq")
+    equilibrium = frame.pivot(index=id_cols, columns=state_col, values="eq_freq")
+    equilibrium = equilibrium.reindex(index=observed.index, columns=observed.columns)
+    values = np.abs(observed.to_numpy(dtype=float) - equilibrium.to_numpy(dtype=float))
+    ok = np.isfinite(values).all(axis=1)
+    distance = np.full(len(observed), np.nan)
+    distance[ok] = values[ok].sum(axis=1)
+    return pd.Series(distance, index=observed.index, name="manhattan")
 
 
-def nucleotide_frequency(bases: str) -> np.ndarray | None:
-    counts = np.zeros(len(alphabet), dtype=float)
-    for base in bases:
-        index = BASE_INDEX.get(base)
-        if index is not None:
-            counts[index] += 1
-    total = counts.sum()
-    if total == 0:
-        return None
-    return counts / total
+def distance_table(nucleotides: pd.DataFrame, codons: pd.DataFrame, amino_acids: pd.DataFrame) -> pd.DataFrame:
+    keys = ["Class", "Gene", "Species"]
+    nucleotide_distance = vector_distance(
+        nucleotides, "nucleotide", [*keys, "subset"]
+    ).unstack("subset")
+    nucleotide_distance = nucleotide_distance.reindex(columns=SUBSET_ORDER)
+    nucleotide_distance.columns = [NUC_DISTANCE_COLUMNS[name] for name in nucleotide_distance.columns]
+    codon_distance = vector_distance(codons, "cdn", keys).rename("cdn")
+    amino_acid_distance = vector_distance(amino_acids, "aa", keys).rename("aa")
+    distances = nucleotide_distance.join(codon_distance).join(amino_acid_distance).reset_index()
+    return distances[["Class", "Gene", "Species", *DISTANCE_COLUMNS]]
 
 
-def average(vectors: list[np.ndarray | None]) -> np.ndarray | None:
-    usable = [vector for vector in vectors if vector is not None]
-    if not usable:
-        return None
-    return np.mean(np.stack(usable), axis=0)
-
-
-def sequence_content(
-    seq: str,
-    codon_index: dict[str, int],
-    aa_index: dict[str, int],
-    fourfold_codons: set[str],
-    coda: CodonAnnotation,
-) -> tuple[dict[str, np.ndarray | None], np.ndarray | None, np.ndarray | None]:
-    seq = str(seq).upper()
-    nucleotides = {name: None for name in SUBSET_ORDER}
-    nucleotides["all"] = nucleotide_frequency(seq)
-    framed = seq[: len(seq) - (len(seq) % 3)]
-    codon_frequency = None
-    aa_frequency = None
-    if framed:
-        nucleotides["pos1"] = nucleotide_frequency(framed[0::3])
-        nucleotides["pos2"] = nucleotide_frequency(framed[1::3])
-        nucleotides["pos3"] = nucleotide_frequency(framed[2::3])
-        codon_counts = np.zeros(len(codon_index), dtype=float)
-        aa_counts = np.zeros(len(aa_index), dtype=float)
-        fourfold_bases = []
-        for start in range(0, len(framed), 3):
-            codon = framed[start : start + 3]
-            codon_id = codon_index.get(codon)
-            if codon_id is not None:
-                codon_counts[codon_id] += 1
-                amino_acid = amino_acid_codes[coda.translate_codon(codon)]
-                if amino_acid != "*":
-                    aa_counts[aa_index[amino_acid]] += 1
-            if codon in fourfold_codons:
-                fourfold_bases.append(codon[2])
-        nucleotides["fourfold"] = nucleotide_frequency("".join(fourfold_bases))
-        codon_total = codon_counts.sum()
-        if codon_total:
-            codon_frequency = codon_counts / codon_total
-        aa_total = aa_counts.sum()
-        if aa_total:
-            aa_frequency = aa_counts / aa_total
-    return nucleotides, codon_frequency, aa_frequency
-
-
-def observed_content(path: Path, codon_order: list[str], aa_order: list[str], coda: CodonAnnotation):
-    codon_index = {codon: index for index, codon in enumerate(codon_order)}
-    aa_index = {amino_acid: index for index, amino_acid in enumerate(aa_order)}
-    fourfold_codons = {codon for codon in codon_order if coda.is_fourfold(codon)}
-    nucleotide_rows = {name: [] for name in SUBSET_ORDER}
-    codon_rows = []
-    aa_rows = []
-    n_sequences = 0
-    for record in SeqIO.parse(path, "fasta"):
-        if record.id.upper() == "OUTGRP":
-            continue
-        n_sequences += 1
-        nucleotides, codon_frequency, aa_frequency = sequence_content(
-            record.seq, codon_index, aa_index, fourfold_codons, coda
-        )
-        for name, frequency in nucleotides.items():
-            nucleotide_rows[name].append(frequency)
-        codon_rows.append(codon_frequency)
-        aa_rows.append(aa_frequency)
-    observed_nucleotides = {
-        name: average(vectors) for name, vectors in nucleotide_rows.items()
-    }
-    return observed_nucleotides, average(codon_rows), average(aa_rows), n_sequences
-
-
-def codon_order_from_changes(changes: pd.DataFrame) -> list[str]:
-    rated = changes.copy()
-    rated["rate"] = 1.0
-    return list(cdn_spectrum_to_matrix(rated).index)
-
-
-def codon_equilibrium(changes: pd.DataFrame, spectrum: dict[str, float], codon_order: list[str]):
-    rated = changes.copy()
-    rated["rate"] = rated["sbs"].map(spectrum)
-    matrix = cdn_spectrum_to_matrix(rated)
-    aligned = matrix.reindex(index=codon_order, columns=codon_order)
-    pi = stationary(aligned.to_numpy(dtype=float))
-    return pi
-
-
-def amino_acid_equilibrium(spectrum: pd.DataFrame, aa_order: list[str]):
-    _, matrix = prepare_exp_aa_subst(spectrum, rate_col="MutSpec", gc=GENETIC_CODE)
-    aligned = matrix.reindex(index=aa_order, columns=aa_order, fill_value=0.0)
-    return stationary(aligned.to_numpy(dtype=float))
-
-
-def manhattan(observed: np.ndarray | None, equilibrium: np.ndarray | None) -> float:
-    if observed is None or equilibrium is None:
-        return np.nan
-    return float(np.abs(observed - equilibrium).sum())
-
-
-def append_frequencies(rows, meta, state_name, states, values, value_name, extra=None):
-    if values is None:
+def plot_frequency_pages(frame, state_col, state_order, path: Path, subset_col=None) -> None:
+    pages = []
+    classes = [name for name in CLASS_ORDER if name in set(frame["Class"])]
+    genes = [name for name in GENE_ORDER if name in set(frame["Gene"])]
+    subsets = [None]
+    if subset_col is not None:
+        subsets = [name for name in SUBSET_ORDER if name in set(frame[subset_col])]
+    for class_name in classes:
+        for gene in genes:
+            for subset in subsets:
+                page = frame[(frame["Class"] == class_name) & (frame["Gene"] == gene)]
+                if subset is not None:
+                    page = page[page[subset_col] == subset]
+                if page.empty:
+                    continue
+                pages.append((class_name, gene, subset, page))
+    if not pages:
         return
-    for state, value in zip(states, values):
-        row = dict(meta)
-        if extra:
-            row.update(extra)
-        row[state_name] = state
-        row[value_name] = value
-        rows.append(row)
+    with PdfPages(path) as pdf:
+        for class_name, gene, subset, page in pages:
+            long = page.melt(
+                id_vars=[state_col],
+                value_vars=["obs_freq", "eq_freq"],
+                var_name="source",
+                value_name="freq",
+            )
+            long["source"] = long["source"].map(
+                {"obs_freq": "Observed", "eq_freq": "Equilibrium"}
+            )
+            long = long.dropna(subset=["freq"])
+            if long.empty:
+                continue
+            width = max(6, 0.28 * len(state_order))
+            fig, axis = plt.subplots(figsize=(width, 4.5))
+            sns.boxplot(
+                data=long,
+                x=state_col,
+                y="freq",
+                hue="source",
+                order=state_order,
+                hue_order=SOURCE_ORDER,
+                palette=SOURCE_PALETTE,
+                fliersize=1.5,
+                ax=axis,
+            )
+            subset_label = "" if subset is None else f", {SUBSET_LABELS[subset]}"
+            axis.set_title(f"{class_name} {gene}{subset_label}")
+            axis.set_xlabel("")
+            axis.set_ylabel("Frequency")
+            axis.tick_params(axis="x", rotation=90)
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+
+def plot_distance_pairs(distances: pd.DataFrame, path: Path) -> None:
+    pairs = [
+        ("nuc_all", "cdn", "CDS", "Codon"),
+        ("nuc_all", "aa", "CDS", "Amino acid"),
+        ("cdn", "aa", "Codon", "Amino acid"),
+        ("nuc_pos1", "nuc_all", "1st", "CDS"),
+        ("nuc_pos2", "nuc_all", "2nd", "CDS"),
+        ("nuc_pos3", "nuc_all", "3rd", "CDS"),
+        ("nuc_fourfold", "nuc_all", "Four-fold", "CDS"),
+    ]
+    genes = [gene for gene in GENE_ORDER if gene in set(distances["Gene"])]
+    fig, axes = plt.subplots(
+        len(genes),
+        len(pairs),
+        figsize=(3.1 * len(pairs), 3.1 * len(genes)),
+        squeeze=False,
+        sharex="col",
+        sharey="col",
+    )
+    legend_axis = None
+    for row, gene in enumerate(genes):
+        subset = distances[distances["Gene"] == gene]
+        for col, (x_col, y_col, x_label, y_label) in enumerate(pairs):
+            axis = axes[row, col]
+            sns.scatterplot(
+                data=subset,
+                x=x_col,
+                y=y_col,
+                hue="Class",
+                hue_order=CLASS_ORDER,
+                palette=CLASS_PALETTE,
+                ax=axis,
+                s=12,
+                linewidth=0,
+                legend=row == 0 and col == 0,
+            )
+            axis.set_xlabel(x_label if row == len(genes) - 1 else "")
+            axis.set_ylabel(f"{gene}\n{y_label}" if col == 0 else y_label)
+            if row == 0 and col == 0:
+                legend_axis = axis
+    if legend_axis is not None and legend_axis.get_legend() is not None:
+        sns.move_legend(legend_axis, "upper left", bbox_to_anchor=(1.02, 1), title="Class")
+    fig.suptitle("Pairwise Manhattan distances to each species' own equilibrium", y=1.01)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_distances(frame: pd.DataFrame, x: str, x_order: list[str], title: str, path: Path) -> None:
@@ -235,91 +201,22 @@ def plot_distances(frame: pd.DataFrame, x: str, x_order: list[str], title: str, 
 
 
 def main() -> None:
-    DATA_DIR.mkdir(exist_ok=True)
     FIGURE_DIR.mkdir(exist_ok=True)
-    coda = CodonAnnotation(GENETIC_CODE)
-    changes = collect_possible_changes(GENETIC_CODE)
-    states = {
-        "nucleotide": list(alphabet),
-        "codon": codon_order_from_changes(changes),
-        "aa": AA_ORDER,
-    }
-    spectra = pd.read_csv(SPECTRUM_PATH)
-    groups = list(spectra.groupby(["Gene", "Species"], sort=False))
+    nucleotides = read_frequencies(DATA_DIR / "nuc_freqs.csv", "nucleotide")
+    codons = read_frequencies(DATA_DIR / "cdn_freqs.csv", "cdn")
+    amino_acids = read_frequencies(DATA_DIR / "aa_freqs.csv", "aa")
+    distances = distance_table(nucleotides, codons, amino_acids)
+    distances.to_csv(DATA_DIR / "distances.csv", index=False, float_format="%.6g")
 
-    nuc_eq_rows, nuc_obs_rows, nuc_dist_rows = [], [], []
-    cdn_eq_rows, cdn_obs_rows, cdn_dist_rows = [], [], []
-    aa_eq_rows, aa_obs_rows, aa_dist_rows = [], [], []
-    n_missing_fasta = 0
-    n_failed = {"nucleotide": 0, "codon": 0, "aa": 0}
-
-    for (gene, species), group in tqdm(groups, desc="Species-gene"):
-        meta = {
-            "Class": group["Class"].iloc[0],
-            "Gene": gene,
-            "Species": species,
-        }
-        spectrum = group.set_index("Mut")["MutSpec"].to_dict()
-        nuc_eq = stationary(nuc_spectrum_to_matrix(spectrum))
-        cdn_eq = codon_equilibrium(changes, spectrum, states["codon"])
-        aa_eq = amino_acid_equilibrium(group[["Mut", "MutSpec"]], states["aa"])
-        for level, equilibrium in (
-            ("nucleotide", nuc_eq),
-            ("codon", cdn_eq),
-            ("aa", aa_eq),
-        ):
-            if equilibrium is None:
-                n_failed[level] += 1
-
-        fasta_path = FASTA_ROOT / gene / f"{gene}__{species}" / "seqs_unique.fasta"
-        if fasta_path.exists():
-            nuc_obs, cdn_obs, aa_obs, _ = observed_content(
-                fasta_path, states["codon"], states["aa"], coda
-            )
-        else:
-            n_missing_fasta += 1
-            nuc_obs = {name: None for name in SUBSET_ORDER}
-            cdn_obs = None
-            aa_obs = None
-
-        append_frequencies(nuc_eq_rows, meta, "nucleotide", states["nucleotide"], nuc_eq, "eq_freq")
-        append_frequencies(cdn_eq_rows, meta, "cdn", states["codon"], cdn_eq, "eq_freq")
-        append_frequencies(aa_eq_rows, meta, "aa", states["aa"], aa_eq, "eq_freq")
-        append_frequencies(cdn_obs_rows, meta, "cdn", states["codon"], cdn_obs, "obs_freq")
-        append_frequencies(aa_obs_rows, meta, "aa", states["aa"], aa_obs, "obs_freq")
-        for subset, observed in nuc_obs.items():
-            append_frequencies(
-                nuc_obs_rows,
-                meta,
-                "nucleotide",
-                states["nucleotide"],
-                observed,
-                "obs_freq",
-                {"subset": subset},
-            )
-            nuc_dist_rows.append({**meta, "subset": subset, "manhattan": manhattan(observed, nuc_eq)})
-        cdn_dist_rows.append({**meta, "manhattan": manhattan(cdn_obs, cdn_eq)})
-        aa_dist_rows.append({**meta, "manhattan": manhattan(aa_obs, aa_eq)})
-
-    tables = {
-        "nuc_eq_freqs.csv": nuc_eq_rows,
-        "nuc_obs_freqs.csv": nuc_obs_rows,
-        "nuc_distances.csv": nuc_dist_rows,
-        "cdn_eq_freqs.csv": cdn_eq_rows,
-        "cdn_obs_freqs.csv": cdn_obs_rows,
-        "cdn_distances.csv": cdn_dist_rows,
-        "aa_eq_freqs.csv": aa_eq_rows,
-        "aa_obs_freqs.csv": aa_obs_rows,
-        "aa_distances.csv": aa_dist_rows,
-    }
-    frames = {}
-    for name, rows in tables.items():
-        frame = pd.DataFrame(rows)
-        frame.to_csv(DATA_DIR / name, index=False, float_format="%.6g")
-        frames[name] = frame
-
-    nuc_plot = frames["nuc_distances.csv"].copy()
-    nuc_plot["subset"] = nuc_plot["subset"].map(SUBSET_LABELS)
+    nuc_plot = distances.melt(
+        id_vars=["Class", "Gene", "Species"],
+        value_vars=list(NUC_DISTANCE_COLUMNS.values()),
+        var_name="subset",
+        value_name="manhattan",
+    )
+    nuc_plot["subset"] = nuc_plot["subset"].map(
+        {column: SUBSET_LABELS[subset] for subset, column in NUC_DISTANCE_COLUMNS.items()}
+    )
     plot_distances(
         nuc_plot,
         "subset",
@@ -327,23 +224,36 @@ def main() -> None:
         "Nucleotide content versus mutational equilibrium",
         FIGURE_DIR / "nuc_eq_distance_distributions.pdf",
     )
-    plot_distances(
-        frames["cdn_distances.csv"],
-        "Class",
-        CLASS_ORDER,
-        "Codon content versus mutational equilibrium",
-        FIGURE_DIR / "cdn_eq_distance_distributions.pdf",
+    for column, title, filename in (
+        ("cdn", "Codon content versus mutational equilibrium", "cdn_eq_distance_distributions.pdf"),
+        ("aa", "Amino-acid content versus mutational equilibrium", "aa_eq_distance_distributions.pdf"),
+    ):
+        level_plot = distances.melt(
+            id_vars=["Class", "Gene", "Species"],
+            value_vars=[column],
+            value_name="manhattan",
+        )
+        plot_distances(level_plot, "Class", CLASS_ORDER, title, FIGURE_DIR / filename)
+    plot_distance_pairs(distances, FIGURE_DIR / "distance_pairwise_dotplots.pdf")
+    plot_frequency_pages(
+        nucleotides,
+        "nucleotide",
+        list(alphabet),
+        FIGURE_DIR / "nuc_freq_by_class_gene.pdf",
+        subset_col="subset",
     )
-    plot_distances(
-        frames["aa_distances.csv"],
-        "Class",
-        CLASS_ORDER,
-        "Amino-acid content versus mutational equilibrium",
-        FIGURE_DIR / "aa_eq_distance_distributions.pdf",
+    plot_frequency_pages(
+        codons,
+        "cdn",
+        list(dict.fromkeys(codons["cdn"])),
+        FIGURE_DIR / "cdn_freq_by_class_gene.pdf",
     )
-    print(f"pairs: {len(groups)}")
-    print(f"missing fasta: {n_missing_fasta}")
-    print(f"failed equilibria: {n_failed}")
+    plot_frequency_pages(
+        amino_acids,
+        "aa",
+        AA_ORDER,
+        FIGURE_DIR / "aa_freq_by_class_gene.pdf",
+    )
 
 
 if __name__ == "__main__":
