@@ -23,7 +23,7 @@ def plot_exp_heatmap(exp_aa_subst_matrix: pd.DataFrame, save_path: str, show=Tru
         fmt=".2f",
         ax=axs[0, 1],
         cbar_ax=axs[0, 2],
-        cmap="light:r",
+        cmap=sns.color_palette("light:r", as_cmap=True),
         cbar_kws={"label": "Substitution rate"},
         mask=exp_aa_subst_matrix == 0,
     )
